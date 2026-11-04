@@ -15,7 +15,10 @@ on the pilot, then scale.
 - **Done:** tile planner, headless renderer on Google 3D Tiles, seam checks, pilot rendered
   north-up (32 tiles), training-tile selection, tile pyramid + viewer (prototype map of the
   renders), Gemini image-model script (`pipeline/stylize.py`).
-- **Next:** Phase 3 — style examples: write prompts for *photo* renders, iterate on ~10 tiles.
+- **Next:** Phase 4.0, the free style comparison on the PC: code pixelation vs tiny.london LoRA
+  vs the Illustrious pixel-art LoRA (img2img + ControlNet). The user approved it on 2026-11-04.
+  Start with the downloads to the PC (~10 GB). Then a direction is picked, and only then come
+  paid targets or a fine-tune (Phase 4 plan).
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
 
@@ -144,11 +147,59 @@ Deliverable: `data/training_pairs/` with a curated set + `manifest.csv`.
 Why: consistent style across thousands of tiles, cheaper than a cloud model per tile, and can
 run on the user's NVIDIA GPU. (Closed mode: private experiment only.)
 
-- [ ] Base image-editing model that supports LoRA (Qwen-Image-Edit, FLUX Kontext, …).
-- [ ] Two tasks in one model: *generate* (render → pixel art) and *infill* (render + finished
-      neighbour quadrants → continuation). Isopolis: 4-bit TL/TR/BL/BR masks, all 15 patterns;
-      Qwen-Image-Edit-2511 + LoRA r=16, 2,000 steps, 1× H100; 100 pairs beat 60.
-- [ ] Evaluate on held-out tiles: style match, geometry, seams. Iterate on data first.
+Model to follow: **tiny.london LoRA** (huggingface.co/ktoyame/tiny-london-lora, read 2026-11-04).
+Base Qwen-Image-2.1-Turbo (int8 weights, turbo training adapter on during training only).
+Trained with ostris/ai-toolkit: LoRA r32/α32, 8,000 steps, batch 1, AdamW 8-bit, lr 1e-4, bf16,
+1× H100, "about 4 h". Data: 6,326 examples (1,024 + 512 px) from ~2,500 Google 3D Tiles frames.
+Targets were made by Gemini 3 Pro Image and filtered automatically (copies of the photo, invented
+water, invented buildings). It uses one caption for every example: the isometric-nyc outline
+prompt with a 2 px red frame. Some inputs are part render, part finished art, so the same
+LoRA also does infill. Inference: 8 steps, cfg 1, overlapping windows averaged in latent space.
+Licence: Qwen Research (non-commercial). Known faults: landmarks drawn on open water, fields
+drawn as water.
+
+Where it runs: training does **not** fit on the PC (20B model; 8 GB VRAM and 32 GB RAM are both
+too small even with fp8 and block swap). Train on a rented H100. The PC does data checks,
+inference and evaluation for free. Renders stay on the Mac (Metal), and the Mac drives the PC
+over the LAN.
+
+- [ ] **4.0 Free comparison on the PC, before paying for anything.** Use the same tiles
+      (0_0, 0_-1 + the 3×3 block). Compare side by side:
+      a. Code pixelation only (`stylize.py --pixel`): the baseline "pixelated photo".
+      b. **tiny.london LoRA as it is** (private use is fine under its research licence). This
+         shows whether Qwen-Image-2.1 + LoRA runs in 8 GB (int8 + offload) and gives a quality
+         bar. tinysthlm.com already uses it, so our own style must differ.
+      c. **"Pixel art style LoRa | Illustrious"** (civitai 1288970 by Oktaze, v1.0,
+         `pixelart.safetensors` 218 MB, trigger "pixel art"). The base is Illustrious XL, an
+         SDXL anime model, not an edit model. So run it as img2img (denoise sweep 0.3–0.7) with
+         an SDXL ControlNet (canny/depth/tile) to keep the geometry. It was most likely trained
+         on characters, not buildings. Civitai flags: commercial use and derivatives allowed,
+         no credit needed; check the Illustrious base licence separately.
+      d. Optionally 1–2 other pixel-art LoRAs for Qwen-Image (edit models keep geometry better).
+      The user picks a direction. That decides whether we need paid targets at all.
+      → An SDXL route would also make **training on the PC** possible (SDXL LoRA training fits
+        in 8 GB). Qwen-Image training does not.
+- [ ] **4.1 Base model decision**, from 4.0: Qwen-Image-2.1-Turbo (the proven recipe) or
+      Qwen-Image-Edit-2509/2511 (already runs on the PC with Nunchaku; Isopolis: 2511 + r16,
+      2,000 steps). Check that ComfyUI/Nunchaku can load our LoRA on the chosen base.
+- [ ] **4.2 Targets (Phase 3)**: frame + outline prompt, Nano Banana Pro, our own style
+      references. Iterate on ~10 tiles until the user approves the style.
+- [ ] **4.3 Dataset v1, small**: ~400 north-up frames from the training area (never the pilot).
+      Add 512 px crops and part-finished infill inputs. Run the automatic filters and review by hand.
+      Expect ~30 % rejects. Hold out ~20 frames.
+- [ ] **4.4 Train v1**: ai-toolkit on a rented H100, r32, lr 1e-4, ~3,000 steps (~1.5–2 h),
+      checkpoint every 500 steps. Evaluate the checkpoints on the PC: held-out frames + the 3×3
+      pilot block (style, geometry, invented water/buildings, seams).
+- [ ] **4.5 Scale** only if v1 shows the style but is inconsistent: ~1,500–2,500 frames,
+      ~8,000 steps. Fix the data before adding steps.
+- [ ] Two tasks in one model: *generate* and *infill* (the red frame marks the region to draw;
+      Isopolis used 4-bit TL/TR/BL/BR masks, all 15 patterns).
+
+Cost estimate. H100 rental at ~$2–3/h (check the price when booking); targets at $0.134 each (half
+price in batch mode). v1: 400 frames × 1.3 for rejects ≈ $70 of targets, plus ~$10 of GPU
+time, plus ~$10 for setup and mistakes ≈ **$90**. Full tiny.london scale: 2,500 frames ≈ $440
+of targets (≈ $220 in batch mode), plus 8 h ≈ $25 of GPU time ≈ **$250–470**. Target images, not GPU
+hours, are the main cost.
 
 Deliverable: a model + `pipeline/generate.py`.
 
@@ -198,7 +249,8 @@ Deliverable: every quadrant in the pilot approved.
 - Google 3D Tiles: one session per render run (~10–30 s per tile).
 - Style examples: Nano Banana Pro $0.13 / Nano Banana 2 $0.067 per 1K image (Vertex global);
   batch mode half price. A few hundred images → ~$20–60.
-- Fine-tuning: a few GPU-hours (or local GPU).
+- Fine-tuning: rented H100 (doesn't fit the PC); v1 ≈ $90 in total, tiny.london scale ≈ $250–470,
+  mostly target images (see Phase 4).
 
 ## Known risks
 
