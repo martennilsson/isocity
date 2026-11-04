@@ -1,0 +1,31 @@
+# Training-pair sampling area. MUST share origin, camera, scale and tile sizes with area.yaml
+# (tests/test_training_area.py checks this), so training renders sit on the same pixel grid.
+# Changing anything in `origin`, `camera` or `scale` moves every tile: re-run
+# pipeline/plan_tiles.py and throw away existing renders.
+name: training
+boundary: training.geojson   # relative to this file
+
+# World frame: local East-North-Up (metres) tangent to the WGS84 ellipsoid at this point.
+# Fixed explicitly (not derived from the boundary) so editing the boundary never shifts tiles.
+origin:
+  lon: 18.0685
+  lat: 59.3166
+  height_m: 24.0   # ellipsoidal height of the ground reference plane (~sea level in Stockholm)
+
+camera:
+  projection: orthographic
+  elevation_deg: 30        # 2:1 pixel-art isometric (ground compressed by sin(30°) = 0.5)
+  look_azimuth_deg: 225    # compass direction the camera looks toward, clockwise from north.
+                           # 225 = looking south-west, from over Saltsjön: shows the north-facing
+                           # cliffs of Söder (Fjällgatan, Mariaberget). North points screen-down-right.
+
+scale:
+  metres_per_pixel: 0.25   # horizontal metres per output pixel
+
+tiles:
+  render_size_px: 1024
+  quadrants_per_side: 2    # 2x2 quadrants of 512 px. Generation slides a 1024 window by half a
+                           # tile (1 quadrant), as Isopolis/isometric.nyc do: 4-bit context masks.
+  margin_px: 0             # tiles are sampled from inside the box; no context margin needed
+  overlap_px: 0            # extra pixels rendered/generated on each side of every window and
+                           # cropped away at stitch time. Test 0 vs ~3 on a 3x3 block.

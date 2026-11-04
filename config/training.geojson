@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "stockholm-training",
+        "note": "Training-pair sampling area, ~40 km2 of central Stockholm: Kungsholmen, Vasastan, Norrmalm, Östermalm, Gamla stan, Skeppsholmen, Djurgården, Södermalm, Hammarby Sjöstad, Liljeholmen. Rough box; refine on geojson.io."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [17.995, 59.300], [18.130, 59.300], [18.130, 59.345], [17.995, 59.345], [17.995, 59.300]
+        ]]
+      }
+    }
+  ]
+}
