@@ -60,8 +60,14 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
       (git-ignored). Current references are screenshots of tinyrj/tinygyn: private use only.
 - [x] Google Maps Platform key (`GOOGLE_MAPS_API_KEY` in `.env`); Vertex AI via ADC
       (project `crafty-haiku-422`, global endpoint, no key needed).
-- [ ] Image models later: user wants to run generation locally on their NVIDIA GPU (GPU/VRAM
-      unknown). Check licences before any public use: e.g. Qwen-Image 2.1 is non-commercial only.
+- [ ] **Local image model on the user's PC** (RTX 3070 8 GB, 32 GB RAM, same LAN as the Mac):
+      ComfyUI + Nunchaku 4-bit Qwen-Image-Edit-2509 (Lightning), reached from the Mac over the
+      ComfyUI HTTP API (`--listen`, LAN only, no router port-forward; Tailscale if remote).
+      Then `stylize.py --backend comfyui`. Fine-tuning a 20B model won't fit in 8 GB: train in the
+      cloud, generate locally. Licences: Qwen-Image-Edit Apache 2.0; FLUX.1 Kontext [dev] and
+      Qwen-Image 2.1 non-commercial.
+      → step 1: SSH from the Mac into the PC (`docs/windows-ssh-setup.md`, a prompt to paste into
+        Claude on the PC). OS on the PC: unknown (Windows assumed; Ubuntu preferable if dedicated).
 
 ## Phase 1 — 3D city data
 
