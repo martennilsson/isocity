@@ -14,9 +14,9 @@ origin:
 camera:
   projection: orthographic
   elevation_deg: 30        # 2:1 pixel-art isometric (ground compressed by sin(30°) = 0.5)
-  look_azimuth_deg: 225    # compass direction the camera looks toward, clockwise from north.
-                           # 225 = looking south-west, from over Saltsjön: shows the north-facing
-                           # cliffs of Söder (Fjällgatan, Mariaberget). North points screen-down-right.
+  look_azimuth_deg: 0      # compass direction the camera looks toward, clockwise from north.
+                           # 0 = looking north (camera in the south): north points straight up the
+                           # screen, like most maps; shows south-facing (sunlit) facades.
 
 scale:
   metres_per_pixel: 0.25   # horizontal metres per output pixel

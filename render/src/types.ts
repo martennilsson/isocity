@@ -30,7 +30,7 @@ export interface Plan {
 }
 
 export interface RenderOptions {
-  source: 'google' | 'test';
+  source: 'osm' | 'google' | 'test';
   apiKey?: string;
   errorTarget: number; // max screen-space error in px; lower = more detail, more downloads
   antialias: boolean;

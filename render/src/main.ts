@@ -33,7 +33,8 @@ window.isocity = {
 
 async function init() {
   const cfg: PageConfig = await (await fetch('/__config')).json();
-  iso = new IsoScene(cfg.plan, cfg.options, canvas);
+  const osm = cfg.options.source === 'osm' ? await (await fetch('/__scene')).json() : undefined;
+  iso = new IsoScene(cfg.plan, cfg.options, canvas, osm);
   byId = new Map(cfg.plan.tiles.map((t) => [t.id, t]));
   resolveReady();
   if (viewMode) startViewer(cfg);

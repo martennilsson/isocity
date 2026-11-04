@@ -24,6 +24,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin, GoogleCloudAuthPlugin } from '3d-tiles-renderer/plugins';
 import type { Plan, PlanTile, RenderOptions } from './types';
+import { buildOsmScene, type OsmScene } from './osm';
 
 const CAMERA_DISTANCE_M = 4000; // far enough above every roof; ortho, so only clipping depends on it
 
@@ -50,11 +51,13 @@ export class IsoScene {
   private tileIds = new WeakMap<object, number>();
   private nextTileId = 1;
   private loadErrors: string[] = [];
+  private staticAttributions: string[] = [];
 
   constructor(
     readonly plan: Plan,
     readonly opts: RenderOptions,
     canvas?: HTMLCanvasElement,
+    osmScene?: OsmScene,
   ) {
     const size = plan.render_size_px;
     this.renderer = new WebGLRenderer({
@@ -72,7 +75,11 @@ export class IsoScene {
     this.camera.up.fromArray(plan.camera.up_enu);
 
     if (opts.source === 'google') this.initGoogle();
-    else this.initTestScene();
+    else if (opts.source === 'osm') {
+      if (!osmScene) throw new Error('source osm needs a scene (--scene)');
+      this.scene.add(buildOsmScene(osmScene));
+      this.staticAttributions = [osmScene.attribution];
+    } else this.initTestScene();
   }
 
   private initGoogle() {
@@ -203,7 +210,9 @@ export class IsoScene {
       }
     }
     this.frame();
-    const attributions = (this.tiles?.getAttributions() ?? []).map((a) => String(a.value));
+    const attributions = this.tiles
+      ? this.tiles.getAttributions().map((a) => String(a.value))
+      : this.staticAttributions;
     const cache = this.tiles ? (this.tiles as unknown as TilesInternals).lruCache : null;
     return {
       png: this.renderer.domElement.toDataURL('image/png'),

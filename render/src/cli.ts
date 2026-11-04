@@ -1,9 +1,9 @@
 // Render plan tiles headless, or open the interactive viewer.
 //
 //   npm run render -- render --plan ../data/plan/sodermalm.json --out ../data/renders/sodermalm \
-//       [--tiles=-1_-1,0_-1 | --tiles-file F | --block=-1,-1,1,1 | --all] [--source google|test] [--error-target 2]
+//       [--tiles=-1_-1,0_-1 | --tiles-file F | --block=-1,-1,1,1 | --all] [--source osm|google|test] [--scene F] [--error-target 2]
 //       [--no-antialias] [--cache-mb 3000] [--force] [--headed] [--timeout-s 300] [--env ../.env]
-//   npm run render -- view --plan ../data/plan/sodermalm.json [--source google|test] [--port 5173]
+//   npm run render -- view --plan ../data/plan/sodermalm.json [--source osm|google|test] [--scene F] [--port 5173]
 //
 // Use --opt=VALUE for values starting with "-" (negative tile ids).
 // Resumable: tiles with an existing PNG + sidecar for the same tile geometry are skipped unless --force.
@@ -28,7 +28,8 @@ const { positionals, values: a } = parseArgs({
     'tiles-file': { type: 'string' },
     block: { type: 'string' },
     all: { type: 'boolean', default: false },
-    source: { type: 'string', default: 'google' },
+    source: { type: 'string', default: 'osm' },
+    scene: { type: 'string' },
     'error-target': { type: 'string', default: '2' },
     'no-antialias': { type: 'boolean', default: false },
     force: { type: 'boolean', default: false },
@@ -49,12 +50,13 @@ function fail(msg: string): never {
 const command = positionals[0];
 if (command !== 'render' && command !== 'view') fail('usage: cli.ts render|view --plan PLAN.json ... (see header)');
 if (!a.plan) fail('--plan is required');
-if (a.source !== 'google' && a.source !== 'test') fail('--source must be google or test');
+if (!['osm', 'google', 'test'].includes(a.source)) fail('--source must be osm, google or test');
+if (a.source === 'osm' && !a.scene) fail('--source osm needs --scene data/osm/<area>.scene.json (pipeline/osm_scene.py)');
 if (existsSync(a.env)) process.loadEnvFile(a.env);
 
 const plan: Plan = JSON.parse(readFileSync(a.plan, 'utf8'));
 const options: RenderOptions = {
-  source: a.source,
+  source: a.source as RenderOptions['source'],
   apiKey: process.env.GOOGLE_MAPS_API_KEY || undefined,
   errorTarget: Number(a['error-target']),
   antialias: !a['no-antialias'],
@@ -83,6 +85,11 @@ function selectTiles(): string[] {
 const configPlugin = (cfg: PageConfig): Plugin => ({
   name: 'isocity-config',
   configureServer(server) {
+    server.middlewares.use('/__scene', (_req, res) => {
+      if (!a.scene) return void res.writeHead(404).end();
+      res.setHeader('content-type', 'application/json');
+      res.end(readFileSync(a.scene));
+    });
     server.middlewares.use('/__config', (_req, res) => {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify(cfg));
