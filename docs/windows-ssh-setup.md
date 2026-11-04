@@ -1,82 +1,84 @@
-# Prompt for Claude: set up SSH on my Windows PC
+# SSH setup for the Windows GPU PC
 
-*Copy everything below the line into a new Claude chat on the Windows PC.*
+1. Press **Win + X** and choose **Terminal (Admin)** (or **Windows PowerShell (Admin)**). Click *Yes*.
+2. Click the **copy** button at the top right of the box below, paste into the window
+   (right-click or Ctrl+V) and press **Enter**. It takes a minute or two.
+3. When it says **OK** in green, tell Claude on the Mac "done". If it says **PROBLEM** in red,
+   send a photo of the window.
 
----
+The script is safe to run again. It installs the OpenSSH server (winget, or the official zip as
+fallback), clears a leftover `sshd` firewall rule, opens port 22 for the home (Private) network
+only, marks the home network as Private, and adds the Mac's public key. Same file:
+[`docs/setup-ssh.ps1`](setup-ssh.ps1).
 
-Hi Claude! Please guide me step by step, one step at a time, waiting for me to report back
-after each step. I'm on my Windows 10/11 PC and want my Mac to log in to it over SSH with a key
-(no password), so tools on the Mac can install and run ComfyUI on this PC's NVIDIA RTX 3070.
-Both machines are on the same home network. Explain briefly what each step does, and help me
-troubleshoot if something fails (give me the commands to check). Run everything in PowerShell
-**as Administrator**.
+```powershell
+# One-shot SSH setup for the Windows GPU PC. Paste into PowerShell *as Administrator*.
+# Safe to run again: every step checks first. Home network only (port 22 on Private networks).
+$ErrorActionPreference = 'Continue'
+$key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDvaBU4lUn6xQGJG8I++lKncFIWPEeOgaZOmEv9KjdTV'
+function Say($t) { Write-Host "`n== $t ==" -ForegroundColor Cyan }
 
-What I've learned so far:
-- `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0` (the tildes are part of the
-  feature name: name~arch~language~version) ran for 10+ minutes without finishing, so I aborted
-  it with Ctrl+C. It may still finish in the background via Windows Update.
-- A firewall rule named `sshd` seems to exist already: `New-NetFirewallRule -Name sshd …` fails
-  with "Cannot create a file when that file already exists", although
-  `Get-NetFirewallRule -Name *ssh*` shows nothing.
-- From the Mac, the PC answers ping, but port 22 times out.
+Say '1. OpenSSH server'
+if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+    # A leftover 'sshd' firewall rule makes installers fail with "already exists": remove it first.
+    Remove-NetFirewallRule -Name sshd -ErrorAction SilentlyContinue
+    netsh advfirewall firewall delete rule name="sshd" | Out-Null
+    netsh advfirewall firewall delete rule name="OpenSSH SSH Server (sshd)" | Out-Null
+    Write-Host 'Installing with winget...'
+    winget install --id Microsoft.OpenSSH.Preview --source winget --silent --accept-package-agreements --accept-source-agreements
+}
+if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
+    Write-Host 'winget did not work, installing from the official zip instead...'
+    $rel = Invoke-RestMethod 'https://api.github.com/repos/PowerShell/Win32-OpenSSH/releases/latest'
+    $zip = ($rel.assets | Where-Object name -eq 'OpenSSH-Win64.zip').browser_download_url
+    Invoke-WebRequest $zip -OutFile "$env:TEMP\OpenSSH-Win64.zip"
+    Expand-Archive "$env:TEMP\OpenSSH-Win64.zip" -DestinationPath "$env:ProgramFiles" -Force
+    $dir = "$env:ProgramFiles\OpenSSH"
+    if (Test-Path "$env:ProgramFiles\OpenSSH-Win64") {
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+        Rename-Item "$env:ProgramFiles\OpenSSH-Win64" 'OpenSSH'
+    }
+    & powershell.exe -ExecutionPolicy Bypass -File "$dir\install-sshd.ps1"
+}
+Set-Service sshd -StartupType Automatic
+Start-Service sshd
+Get-Service sshd | Format-Table Name, Status, StartType -AutoSize
 
-The steps:
+Say '2. Firewall: TCP 22, home (Private) network only'
+Remove-NetFirewallRule -Name sshd -ErrorAction SilentlyContinue
+netsh advfirewall firewall delete rule name="sshd" | Out-Null
+try {
+    New-NetFirewallRule -Name sshd -DisplayName 'sshd' -Enabled True -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow -Profile Private -ErrorAction Stop | Out-Null
+} catch {
+    netsh advfirewall firewall add rule name="sshd" dir=in action=allow protocol=TCP localport=22 profile=private | Out-Null
+}
+Write-Host 'Firewall rule for port 22 set.'
 
-1. **Check whether the aborted Windows install finished after all** (two SSH servers would clash,
-   both use the service name `sshd`):
-   ```powershell
-   Get-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-   ```
-   - `Installed` → skip step 2.
-   - `NotPresent` → do step 2.
-   - hangs or shows something pending → restart the PC and check again.
+Say '3. Home network marked as Private'
+Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public' | ForEach-Object {
+    Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private
+    Write-Host "Changed '$($_.Name)' from Public to Private"
+}
+Get-NetConnectionProfile | Format-Table Name, NetworkCategory -AutoSize
 
-2. **Install OpenSSH as an app with winget** (Microsoft's build, much faster than the Windows feature):
-   ```powershell
-   winget install --id Microsoft.OpenSSH.Preview --source winget
-   ```
-   If winget is missing, install the .msi from https://github.com/PowerShell/Win32-OpenSSH/releases.
+Say "4. The Mac's public key"
+$isAdmin = (Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue).Name -contains "$env:COMPUTERNAME\$env:USERNAME"
+if ($isAdmin) {
+    $f = "$env:ProgramData\ssh\administrators_authorized_keys"
+    New-Item -ItemType Directory -Force "$env:ProgramData\ssh" | Out-Null
+} else {
+    $f = "$env:USERPROFILE\.ssh\authorized_keys"
+    New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
+}
+if (-not ((Test-Path $f) -and (Select-String -Path $f -SimpleMatch $key -Quiet))) { Add-Content -Path $f -Value $key }
+if ($isAdmin) { icacls $f /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null }
+Write-Host "Key in $f"
+Restart-Service sshd
 
-3. **Start the service and make it start automatically:**
-   ```powershell
-   Start-Service sshd
-   Set-Service -Name sshd -StartupType Automatic
-   Get-Service sshd
-   ```
-   It should show `Running`.
+Say 'Summary'
+$listening = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue
+if ($listening) { Write-Host 'OK: SSH is listening on port 22. Tell Claude on the Mac: done.' -ForegroundColor Green }
+else { Write-Host 'PROBLEM: nothing is listening on port 22. Send Claude on the Mac a photo of this window.' -ForegroundColor Red }
+```
 
-4. **Open port 22 for the home network only.** Look at the existing rule by its exact name:
-   ```powershell
-   Get-NetFirewallRule -Name sshd | Format-List Name, DisplayName, Enabled, Profile, Direction, Action
-   Get-NetFirewallRule -Name sshd | Get-NetFirewallPortFilter | Format-List Protocol, LocalPort
-   Get-NetConnectionProfile | Select-Object Name, NetworkCategory
-   ```
-   Then fix what's off:
-   - rule disabled or wrong profile:
-     `Set-NetFirewallRule -Name sshd -Enabled True -Profile Private -Direction Inbound -Action Allow`
-   - port filter not TCP 22:
-     `Get-NetFirewallRule -Name sshd | Set-NetFirewallPortFilter -Protocol TCP -LocalPort 22`
-   - network is `Public`: `Set-NetConnectionProfile -Name "<name>" -NetworkCategory Private`
-   - no rule at all:
-     `New-NetFirewallRule -Name sshd -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -Profile Private`
-   - a third-party antivirus/firewall (Norton, McAfee, …) may also block port 22.
-
-5. **Install my Mac's public key.** This is the key (it's public, safe to share):
-   ```
-   ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDvaBU4lUn6xQGJG8I++lKncFIWPEeOgaZOmEv9KjdTV
-   ```
-   - If my Windows user is an **administrator** (check with `net localgroup Administrators`), the key
-     must go in `C:\ProgramData\ssh\administrators_authorized_keys` with restricted permissions:
-     ```powershell
-     Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDvaBU4lUn6xQGJG8I++lKncFIWPEeOgaZOmEv9KjdTV"
-     icacls C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
-     ```
-   - If my user is **not** an administrator, put the key in `C:\Users\<me>\.ssh\authorized_keys`
-     instead (create the `.ssh` folder if needed).
-
-6. **Test.** On this PC: `ssh localhost` should answer (a password prompt is fine here). Then
-   from the Mac: `ssh nilss@192.168.86.32` should log in without a password. My username is
-   `nilss` and the PC's IP is 192.168.86.32; suggest giving the PC a fixed IP (a DHCP
-   reservation in my router) so it doesn't change.
-
-Don't suggest opening port 22 on my router or to the internet: this is for the home network only.
+Never open port 22 on the router or to the internet: this is for the home network only.
