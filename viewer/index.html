@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>isocity</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="title" class="panel"></div>
+    <div id="compass" class="panel" title="North">
+      <svg viewBox="-20 -20 40 40" width="44" height="44">
+        <g id="needle"><path d="M0,-15 L5,4 L0,1 L-5,4 Z" fill="#e8e8e8" /><text y="15" text-anchor="middle" font-size="9" fill="#e8e8e8">N</text></g>
+      </svg>
+    </div>
+    <div id="coords" class="panel"></div>
+    <div id="attribution" class="panel"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

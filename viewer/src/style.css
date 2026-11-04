@@ -1,0 +1,9 @@
+html, body { margin: 0; height: 100%; background: #14161b; color: #e8e8e8; font: 13px system-ui, sans-serif; overflow: hidden; }
+#map { position: absolute; inset: 0; }
+.panel { position: absolute; background: #000b; padding: 5px 9px; border-radius: 4px; pointer-events: none; z-index: 10; }
+#title { top: 10px; left: 10px; font-weight: 600; }
+#compass { top: 10px; right: 10px; padding: 4px; border-radius: 50%; }
+#coords { bottom: 10px; left: 10px; font-variant-numeric: tabular-nums; }
+#attribution { bottom: 10px; right: 10px; pointer-events: auto; }
+#map.pixelated canvas { image-rendering: pixelated; }
+.panel:empty { display: none; }

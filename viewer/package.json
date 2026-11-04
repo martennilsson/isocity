@@ -1,0 +1,19 @@
+{
+  "name": "isocity-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "viewer": "tsx cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openseadragon": "^6.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/openseadragon": "^6.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
