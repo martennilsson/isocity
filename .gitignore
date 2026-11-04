@@ -6,3 +6,7 @@ node_modules/
 __pycache__/
 *.pyc
 .DS_Store
+
+# style references are private screenshots of other maps: never commit them
+style/references/*
+!style/references/.gitkeep
