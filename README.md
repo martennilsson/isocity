@@ -33,7 +33,14 @@ uv run python -m pipeline.build_pyramid --plan data/plan/sodermalm.json \
 cd viewer && npm install
 npm run viewer -- dev --map ../dist/sodermalm-renders     # local dev server
 npm run viewer -- build --map ../dist/sodermalm-renders   # write index.html into the map folder
+cd ..
+
+# pixel art from renders with Gemini on Vertex AI (ADC: gcloud auth application-default login)
+uv run python -m pipeline.stylize --renders data/renders/sodermalm --tiles=0_0 \
+    --prompt style/prompts/<version>.md --out data/styled/<run> --project <gcp-project> \
+    --model gemini-3-pro-image [--ref style/references/<img>.png] [--pixel 2]
 ```
 
-> Google Photorealistic 3D Tiles may not be stored, published, turned into derived art or used
-> for AI training (see PLAN.md, Phase 0). Renders from it are for private testing only.
+> **Closed mode** (see PLAN.md): Google Photorealistic 3D Tiles may not be stored, published,
+> turned into derived art or used for AI training. Everything derived from them stays local
+> and private; switch to a licensed source before publishing anything.
