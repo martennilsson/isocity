@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "sodermalm-pilot",
+        "note": "Rough pilot box, ~1.9 km2: Slussen, Mariaberget, Mariatorget, Medborgarplatsen, Katarina, plus a strip of Riddarfjarden/Saltsjon water. Refine on geojson.io."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [18.0550, 59.3110],
+            [18.0820, 59.3110],
+            [18.0820, 59.3222],
+            [18.0550, 59.3222],
+            [18.0550, 59.3110]
+          ]
+        ]
+      }
+    }
+  ]
+}
