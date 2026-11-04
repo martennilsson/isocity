@@ -1,0 +1,19 @@
+[project]
+name = "isocity"
+version = "0.1.0"
+description = "Isometric pixel-art map of a real city — pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2",
+    "pillow>=11",
+    "pyvips[binary]>=3",
+    "pyyaml>=6",
+    "shapely>=2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
