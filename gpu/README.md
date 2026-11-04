@@ -19,3 +19,23 @@ The PC must not sleep while serving (set by the user in Windows power settings).
 Use from the Mac:
 `uv run python -m pipeline.stylize --backend comfyui --comfyui-url http://<pc>:8188 --renders … --tiles=… --prompt … --out …`
 (~45 s for the first image while the model loads, then ~22 s per 1024² tile.)
+
+## Phase 4.0 style comparison models (~27 GB more)
+
+`download-models-4.0.ps1` (same way, as a scheduled task; SHA-256 checked):
+tiny.london LoRA + Qwen-Image-2.1-Turbo int8 convrot + Qwen3-VL 8B text encoder + VAE (all
+Qwen Research licence, non-commercial), Illustrious XL v0.1 (SDXL) and xinsir ControlNet union
+SDXL promax. Qwen-Image-2.1 needs a ComfyUI with the `TextEncodeQwenImage21` / `QwenImage21Cache`
+nodes and INT8 ConvRot support; `stylize.py` checks the server's `/object_info` before a run.
+
+The civitai "Pixel art style LoRa | Illustrious" (version 1454408, `pixelart.safetensors`,
+SHA-256 `c7c3e006…eaab`) needs a civitai login: put an API token (civitai.com → Account settings →
+API keys) in `.env` as `CIVITAI_API_TOKEN`. Before running the script, copy it to the PC as
+`C:\ai\civitai-token.txt`; the script deletes it at the end. (scp of the 218 MB file from the Mac
+stalled at 0 bytes on 2026-11-04, while small files copy fine; downloading on the PC avoids that.)
+
+**Status 2026-11-04: paused.** The PC has a RAM fault: Windows Memory Diagnostic found errors, the
+same unchanged 8.7 GB file hashed differently on each read, and the first two download runs failed
+SHA-256 checks (even files that had passed once). Two unclean reboots the same day. Not worth buying
+memory for this; the project went back to Nano Banana Pro on Vertex AI. Before using the PC again:
+fix the RAM, then re-hash every model file, including the Qwen-Image-Edit-2509 ones.

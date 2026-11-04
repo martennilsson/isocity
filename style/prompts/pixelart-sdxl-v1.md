@@ -1,0 +1,1 @@
+pixel art, isometric city, aerial view, dense european old town, buildings with pitched roofs, streets, trees, sharp pixels, clean outlines, limited palette, masterpiece, best quality

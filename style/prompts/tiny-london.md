@@ -1,0 +1,1 @@
+Fill in the outlined section with the missing pixels corresponding to the <isometric london pixel art> style, removing the border and exactly following the shape/style/structure of the surrounding image (if present).
