@@ -1,6 +1,10 @@
-"""Turn render tiles into pixel art with a Gemini image model on Vertex AI (Phase 3 style examples).
+"""Turn render tiles into pixel art with an image model (Phase 3 style examples).
 
-Auth: Application Default Credentials (`gcloud auth application-default login`), no API key.
+Backends:
+  vertex  (default): Gemini image models on Vertex AI. Auth: Application Default Credentials
+          (`gcloud auth application-default login`), no API key. Needs --project.
+  comfyui: Qwen-Image-Edit-2509 (Nunchaku 4-bit) on a ComfyUI server, e.g. the GPU PC set up by
+          gpu/ (--comfyui-url http://<pc>:8188). Free; the render is image 1, --ref images 2–3.
 Each output gets a sidecar JSON (model, prompt version, seed, cost estimate) next to it.
 Resumable: existing outputs are skipped unless --force.
 
@@ -92,9 +96,13 @@ def main() -> None:
     ap.add_argument("--tiles", required=True, help="comma-separated tile ids (use --tiles=-1_0,...)")
     ap.add_argument("--prompt", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--project", required=True, help="Google Cloud project with Vertex AI enabled")
+    ap.add_argument("--backend", choices=["vertex", "comfyui"], default="vertex")
+    ap.add_argument("--project", help="vertex: Google Cloud project with Vertex AI enabled")
     ap.add_argument("--location", default="global")
-    ap.add_argument("--model", default="gemini-3.1-flash-image")
+    ap.add_argument("--comfyui-url", help="comfyui: server URL, e.g. http://192.168.86.32:8188")
+    ap.add_argument("--steps", type=int, default=4, help="comfyui: sampler steps (Lightning 4-step model)")
+    ap.add_argument("--model", help="vertex default gemini-3.1-flash-image; comfyui default: the 4-bit "
+                                    "Qwen-Image-Edit-2509 Lightning file")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--ref", type=Path, action="append", default=[], help="style reference image")
@@ -103,15 +111,42 @@ def main() -> None:
     ap.add_argument("--palette-colors", type=int, default=48)
     args = ap.parse_args()
 
-    from google import genai
-
-    client = genai.Client(vertexai=True, project=args.project, location=args.location)
     prompt = args.prompt.read_text()
     refs = []
     for r in args.ref:
         im = Image.open(r).convert("RGB")
         im.thumbnail((1024, 1024), Image.LANCZOS)
         refs.append(im)
+
+    if args.backend == "vertex":
+        if not args.project:
+            ap.error("--backend vertex needs --project")
+        from google import genai
+
+        client = genai.Client(vertexai=True, project=args.project, location=args.location)
+        args.model = args.model or "gemini-3.1-flash-image"
+
+        def generate(tid, tile_prompt, src):
+            img, usage = stylize(client, args.model, tile_prompt, src, args.seed, refs)
+            return img, (usage.model_dump(exclude_none=True) if usage else None)
+    else:
+        if not args.comfyui_url:
+            ap.error("--backend comfyui needs --comfyui-url")
+        from pipeline.comfyui import DEFAULT_MODEL, ComfyUI, edit_workflow
+
+        if len(refs) > 2:
+            ap.error("comfyui: Qwen-Image-Edit-2509 takes at most 2 --ref images (3 images in total)")
+        comfy = ComfyUI(args.comfyui_url)
+        args.model = args.model or DEFAULT_MODEL
+        ref_names = [comfy.upload(im, f"isocity-ref{i}.png") for i, im in enumerate(refs)]
+
+        def generate(tid, tile_prompt, src):
+            name = comfy.upload(src, f"isocity-{tid}.png")
+            wf = edit_workflow(tile_prompt, [name] + ref_names, seed=args.seed, model=args.model, steps=args.steps)
+            out = comfy.run(wf)
+            if not out:
+                raise RuntimeError("ComfyUI returned no image")
+            return out[0], None
     # Shared palette, taken from the first output (references skew it, e.g. Rio orange) and saved,
     # so resumed runs keep using the same colours.
     palette_file = args.out / "palette.png"
@@ -134,7 +169,7 @@ def main() -> None:
         img = None
         for attempt in range(6):  # 429 RESOURCE_EXHAUSTED: shared quota, back off and retry
             try:
-                img, usage = stylize(client, args.model, tile_prompt, src, args.seed, refs)
+                img, usage = generate(tid, tile_prompt, src)
                 break
             except Exception as e:
                 if "429" in str(e) and attempt < 5:
@@ -155,14 +190,16 @@ def main() -> None:
                 palette = make_palette([img], args.palette_colors)
                 palette.save(palette_file)
             pixelate(img, args.pixel, palette).save(dst.with_suffix(".pixel.png"))
-        cost = COST_PER_IMAGE.get(args.model, 0.0)
+        cost = COST_PER_IMAGE.get(args.model, 0.0) if args.backend == "vertex" else 0.0
         total += cost
         dst.with_suffix(".json").write_text(json.dumps({
-            "tile": tid, "source": str(args.renders / f"{tid}.png"), "model": args.model,
-            "location": args.location, "prompt": str(args.prompt), "seed": args.seed,
+            "tile": tid, "source": str(args.renders / f"{tid}.png"), "backend": args.backend,
+            "model": args.model, "location": args.location if args.backend == "vertex" else args.comfyui_url,
+            "steps": args.steps if args.backend == "comfyui" else None,
+            "prompt": str(args.prompt), "seed": args.seed,
             "refs": [str(r) for r in args.ref], "hint": str(hint) if hint and hint.exists() else None,
             "pixel": args.pixel, "palette_colors": args.palette_colors if args.pixel else None,
-            "usage": usage.model_dump(exclude_none=True) if usage else None,
+            "usage": usage,
             "est_cost_usd": cost, "seconds": round(time.time() - t0, 1),
             "created": datetime.now(timezone.utc).isoformat(),
         }, indent=1))

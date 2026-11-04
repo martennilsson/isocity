@@ -60,14 +60,19 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
       (git-ignored). Current references are screenshots of tinyrj/tinygyn: private use only.
 - [x] Google Maps Platform key (`GOOGLE_MAPS_API_KEY` in `.env`); Vertex AI via ADC
       (project `crafty-haiku-422`, global endpoint, no key needed).
-- [ ] **Local image model on the user's PC** (RTX 3070 8 GB, 32 GB RAM, same LAN as the Mac):
-      ComfyUI + Nunchaku 4-bit Qwen-Image-Edit-2509 (Lightning), reached from the Mac over the
-      ComfyUI HTTP API (`--listen`, LAN only, no router port-forward; Tailscale if remote).
-      Then `stylize.py --backend comfyui`. Fine-tuning a 20B model won't fit in 8 GB: train in the
-      cloud, generate locally. Licences: Qwen-Image-Edit Apache 2.0; FLUX.1 Kontext [dev] and
-      Qwen-Image 2.1 non-commercial.
-      → step 1: SSH from the Mac into the PC (`docs/windows-ssh-setup.md`, a prompt to paste into
-        Claude on the PC). OS on the PC: unknown (Windows assumed; Ubuntu preferable if dedicated).
+- [x] **Local image model on the user's PC** (RTX 3070 8 GB, 32 GB RAM, Windows 11, LAN
+      192.168.86.32, user `nilss`, SSH key login from the Mac). Set up 2026-11-04, see `gpu/`:
+      ComfyUI 0.44 + PyTorch 2.10/CUDA 12.8 + Nunchaku 1.2.1 in `C:\ai\ComfyUI`; model
+      `svdq-int4_r32-qwen-image-edit-2509-lightning-4steps-251115` (int4: RTX 30 can't run fp4) +
+      `qwen_2.5_vl_7b_fp8_scaled` + `qwen_image_vae` (all Apache 2.0). Runs as scheduled task
+      `ComfyUI` at boot, port 8188 for the local subnet only. Client: `pipeline/comfyui.py`,
+      `stylize.py --backend comfyui`. ~45 s first image (model load), then ~22 s per 1024² tile.
+      → first test (`style/prompts/photo-v1.md`, tiles 0_-1, 0_0): geometry, buildings and
+        colours kept very faithfully (Södra tornet, Bofills båge right), but hardly any pixel-art
+        styling: a smoothed/painted photo. Erased the Slussen construction area in 0_-1.
+        Expect to need a style LoRA (Phase 4) or more steps / prompt work; fine-tuning a 20B model
+        won't fit in 8 GB: train in the cloud, generate locally.
+      → the PC must not sleep while serving (power settings changed by the user).
 
 ## Phase 1 — 3D city data
 
