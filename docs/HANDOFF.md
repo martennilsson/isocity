@@ -16,20 +16,18 @@ plan and history; this file is the short version of where things stand.
 - **Local GPU route is paused** (the PC has faulty RAM). Its code is on branch `local-model`.
 - **Spent on Vertex so far:** ~$7.20.
 
-## Not committed yet
+## Latest commits
 
-Last commit: `3801ef3` (pushed). Since then, uncommitted:
+All work is committed and pushed (`main`). `3801ef3`: local fidelity check, shared rate-limit
+retry, path-cut plan. `c9fb961`: generation windows and the path-cut mosaic:
 
 - `pipeline/plan_tiles.py`, `config/area.yaml`: generation windows (`generation:` with
   `window_px: 1024`, `stride_px: 768`); `gen_window_rect_px`, `plan_windows`. The plan JSON gets a
   `generation` section (40 windows for the pilot). Window geometry is computed only here.
-- `pipeline/mosaic.py` (new): `cut` (window renders) and `compose` (path cuts → canvas,
-  marked canvas, `cuts.json`, plan tiles as RGBA).
-- `tests/test_plan_tiles.py`, `tests/test_mosaic.py`: 17 tests pass, ruff clean.
+- `pipeline/mosaic.py`: `cut` (window renders) and `compose` (path cuts → canvas, marked
+  canvas, `cuts.json`, plan tiles as RGBA).
+- Tests in `tests/test_plan_tiles.py` and `tests/test_mosaic.py` (17 pass, ruff clean).
 - `pipeline/infill.py` and `style/prompts/infill-v1.md` removed (superseded).
-- `PLAN.md`: status, Phase 3 notes, Phase 5 rewritten around generation windows.
-
-The user hasn't yet said whether to commit these. Ask first.
 
 ## Next step (waiting on the user's go-ahead)
 
