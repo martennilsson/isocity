@@ -20,10 +20,10 @@ on the pilot, then scale.
   decided it's not worth buying memory for this: go back to **Nano Banana Pro** for the style.
   Scripts/workflows for b/c are on branch **`local-model`** (pushed), in case the PC is fixed. 4.0a (code pixelation) is done: the quality bar.
 - **In progress:** Phase 3 style with Nano Banana Pro on the photo renders: `photo-v4` (no grid)
-  is the best so far (see Phase 3). 3×3 block done. $4.84 spent on Vertex.
-- **Next:** seams. Colour levelling failed; context infill works (seam step 2.44 → 1.49) but the
-  filled part is less stylized and one seed invented a harbour: infill-v2 prompt with v4's style
-  section, then a 3×3 block in waves. Option: skip fine-tuning
+  is the best so far (see Phase 3). 3×3 block done. ~$6.00 spent on Vertex.
+- **Next:** seams by **overlapping 1K generations + min-error path cuts** (first test: seam step
+  1.45 → 0.53). Colour levelling, Nano Banana frame infill and bigger windows (2K/4K) all tried
+  and dropped (see Phase 3). Design the overlap grid in `plan_tiles`, then a 3×3 test. Option: skip fine-tuning
   for the pilot and generate it directly (~130 generations ≈ $17, $9 batched; ×2 with 2 seeds).
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
@@ -225,9 +225,33 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
         Problems: the filled half is **less stylized** than v4 (seed 1 kept photo texture on the
         gravel/construction area, fewer outlines), and **seed 2 invented a harbour with boats**
         where the render has a park (passed `fidelity.py`: layout 0.90, too lenient for half-windows).
-      → Next: infill-v2 prompt with v4's full style section (the frame prompt is too weak on
-        style); judge on 2–3 seams. Fidelity check on the filled part only, stricter. Then the
-        wave order for a 3×3 block (seed tiles, then strips, then corners; Phase 5).
+      → `fidelity.py` now also has a **local check**: worst 32×32-px-cell edge correlation where the
+        render has structure (render water skipped via `training_tiles.water_mask`). Flags what
+        the global scores missed: building drawn in a park 0.05, erased construction site 0.09,
+        harbour invented over a park 0.18; clean tiles ≥ 0.29 → "CHECK local" below 0.2.
+      → **infill-v2** (v4's full style section + "no new water, quays, boats") on 3 seams × 2
+        seeds, $0.80 (`data/compare/infill-v2.png`): *worse*. Invented harbours with boats in 3
+        of 6 (naming them seems to prime them), the red frame left visible in some, one output
+        redrew the whole window (drift 69); seam ratios 1.37–4.48. Matches tiny.london: Nano
+        Banana made whole-frame targets only, the fine-tuned LoRA did the infill. **Nano
+        Banana frame infill: dropped** (prompt v2 removed; `infill.py` + v1 kept for now: its
+        window cutting is reused for the overlap grid).
+      → **Bigger windows** (script removed after the test, 2K = 2×2 tiles in one image, 4K = 4×4;
+        $0.134 / $0.24): fewer seams but **detail per building drops** with size: 2K simplifies
+        (thicker outlines, fewer windows, some drift), 4K is coarse and blobby, a few px off;
+        `fidelity.py` rejects all 16 4K tiles (edges 0.17–0.37). The model has a roughly fixed
+        detail budget per image: **1K per tile stays** (`data/compare/nbp-bigwin.png`).
+      → **Min-error path cut** (image quilting; free): in the overlap of two generations, cut
+        along the path where they agree most (DP over |A−B|, 3×3 smoothed). Test on 0_0 art vs
+        infill-v1 s1's raw window: colour difference along the cut 29.8 (straight) → 7.4, seam
+        step 1.45 → 0.53 (below the render's ~1: the cut follows existing street/roof edges).
+        `data/compare/pathcut*.png`. Crop, not blend.
+      → **New Phase 5 plan**: independent 1K `photo-v4` generations on an overlapping grid
+        (e.g. stride 768 px = 1.5 quadrants, 256 px shared bands), seams by min-error path cuts;
+        no infill. Pilot ≈ 11 × 6 = 66 windows ≈ $9 ($18 with 2 candidates). To solve: the
+        stride must stay on the plan grid (`plan_tiles` only: maybe stride = 1 quadrant with
+        alternate windows, or a sub-quadrant grid), and cuts where 3–4 windows meet (sequential
+        cuts, as in image quilting).
 - [ ] Iterate on ~10 varied tiles with `pipeline/stylize.py` (Vertex AI; Nano Banana Pro was
       clearly better than Nano Banana 2 on landmarks; $0.13 vs $0.067 per 1K image; `--ref`,
       `--hints-dir`; 429s retried). The old `--pixel` palette post-process was removed

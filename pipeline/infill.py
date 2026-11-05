@@ -22,8 +22,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from pipeline.fidelity import scores, worst_cell
 from pipeline.plan_tiles import window_rect_px
-from pipeline.stylize import COST_PER_IMAGE, stylize
+from pipeline.stylize import COST_PER_IMAGE, stylize, with_retries
 
 FRAME_PX = 2
 
@@ -104,7 +105,8 @@ def main() -> None:
         im.thumbnail((1024, 1024), Image.LANCZOS)
         refs.append(im)
     client = genai.Client(vertexai=True, project=args.project, location=args.location)
-    img, _ = stylize(client, args.model, args.prompt.read_text(), Image.fromarray(win), args.seed, refs)
+    img, _ = with_retries(lambda: stylize(client, args.model, args.prompt.read_text(), Image.fromarray(win),
+                                          args.seed, refs), f"w{wqx}_{wqy}-s{args.seed}")
     img = img.convert("RGB")
     if img.size != (win.shape[1], win.shape[0]):
         img = img.resize((win.shape[1], win.shape[0]), Image.NEAREST)
@@ -124,12 +126,20 @@ def main() -> None:
     for lr in local.values():
         keep[lr[1]:lr[3], lr[0]:lr[2]] = False
     drift = float(np.abs(gen[keep].astype(int) - art[keep].astype(int)).mean())
+    fx0, fy0 = min(r[0] for r in rs), min(r[1] for r in rs)
+    fx1, fy1 = max(r[2] for r in rs), max(r[3] for r in rs)
+    fr, fg = (Image.fromarray(a[fy0:fy1, fx0:fx1]) for a in (render, gen))
+    layout, edges = scores(fr, fg)
+    cell = worst_cell(fr, fg, n=4 * (fx1 - fx0) // q)
     (args.out / f"{stem}.json").write_text(json.dumps({
         "window": [wqx, wqy], "fill": fills, "window_rect_px": wrect, "art_dir": str(args.art_dir),
         "prompt": str(args.prompt), "model": args.model, "seed": args.seed, "refs": [str(r) for r in args.ref],
-        "context_drift": round(drift, 2), "est_cost_usd": COST_PER_IMAGE.get(args.model, 0.0),
+        "context_drift": round(drift, 2),
+        "fill_fidelity": {"layout": round(layout, 3), "edges": round(edges, 3), "worst_cell": round(cell, 3)},
+        "est_cost_usd": COST_PER_IMAGE.get(args.model, 0.0),
     }, indent=1))
-    print(f"  {stem}: context drift {drift:.1f} (mean abs change of the finished part) -> {args.out}")
+    print(f"  {stem}: context drift {drift:.1f}; filled part layout {layout:.2f} edges {edges:.2f} "
+          f"worst cell {cell:.2f} -> {args.out}")
 
 
 if __name__ == "__main__":

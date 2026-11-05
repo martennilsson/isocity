@@ -30,6 +30,11 @@ BLOCK_PX = 16
 def water_fraction(img: np.ndarray) -> float:
     """Share of 16x16 blocks that look like open water: dark, blue-ish and smooth.
     Tuned on the Söder pilot renders (slate roofs are blue-ish too but textured)."""
+    return float(water_mask(img).mean())
+
+
+def water_mask(img: np.ndarray) -> np.ndarray:
+    """Per 16x16 block: True where the render looks like open water (see water_fraction)."""
     a = img[..., :3].astype(float)
     h, w, _ = a.shape
     h, w = h - h % BLOCK_PX, w - w % BLOCK_PX
@@ -37,7 +42,7 @@ def water_fraction(img: np.ndarray) -> float:
     blk = blk.transpose(0, 2, 1, 3, 4).reshape(h // BLOCK_PX, w // BLOCK_PX, -1, 3)
     med = np.median(blk, axis=2)
     sd = blk.std(axis=2).mean(axis=-1)
-    return float(((med[..., 2] - med[..., 0] > 18) & (med.max(axis=-1) < 110) & (sd < 9)).mean())
+    return (med[..., 2] - med[..., 0] > 18) & (med.max(axis=-1) < 110) & (sd < 9)
 
 
 def empty_fraction(img: np.ndarray) -> float:

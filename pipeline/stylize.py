@@ -47,6 +47,19 @@ def _png(image: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def with_retries(fn, label: str, tries: int = 6):
+    """Call fn(); on 429 RESOURCE_EXHAUSTED (shared quota) back off 20, 40, 80 … s and retry."""
+    for attempt in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            if "429" not in str(e) or attempt == tries - 1:
+                raise
+            wait = 20 * 2**attempt
+            print(f"  {label}: rate limited, retrying in {wait} s")
+            time.sleep(wait)
+
+
 def stylize(client, model: str, prompt: str, image: Image.Image, seed: int | None, refs=()):
     from google.genai import types
 
@@ -139,20 +152,10 @@ def main() -> None:
         if water_fraction(np.asarray(src.convert("RGBA"))) < NO_WATER_BELOW:
             tile_prompt += "\n\nThis image contains NO water at all: draw none, not even at the edges."
         t0 = time.time()
-        img = None
-        for attempt in range(6):  # 429 RESOURCE_EXHAUSTED: shared quota, back off and retry
-            try:
-                img, usage = generate(tid, tile_prompt, src)
-                break
-            except Exception as e:
-                if "429" in str(e) and attempt < 5:
-                    wait = 20 * 2**attempt
-                    print(f"  {tid}: rate limited, retrying in {wait} s")
-                    time.sleep(wait)
-                    continue
-                print(f"  {tid}: FAILED {str(e)[:200]}")
-                break
-        if img is None:
+        try:
+            img, usage = with_retries(lambda: generate(tid, tile_prompt, src), tid)
+        except Exception as e:
+            print(f"  {tid}: FAILED {str(e)[:200]}")
             continue
         if img.size != src.size:
             print(f"  {tid}: model returned {img.size}, resized to {src.size} (nearest)")
