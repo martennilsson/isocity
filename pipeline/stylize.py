@@ -13,12 +13,9 @@ Usage:
         --tiles=0_0,-1_0 --prompt style/prompts/<version>.md --out data/styled/<run> \
         --project crafty-haiku-422 [--model gemini-3.1-flash-image] [--location global] [--seed 1]
         [--ref style/references/a.png --ref ...] [--hints-dir style/prompts/landmarks/<area>]
-        [--pixel 2 --palette-colors 48]
 
 --ref: style reference images, sent after the render (downscaled to 1024 px).
 --hints-dir: per-tile extra prompt text from <hints-dir>-<tile>.md if present (landmarks).
---pixel N: also write <id>.pixel.png: box-downscale by N, snap to one palette shared by all
-  tiles (taken from the first output of the run), nearest-neighbour upscale.
 Tiles whose render has (almost) no water get an explicit "no water" line: the model likes to
 invent quays at tile edges. Water is detected with pipeline.training_tiles.water_fraction.
 """
@@ -72,24 +69,6 @@ def stylize(client, model: str, prompt: str, image: Image.Image, seed: int | Non
     raise RuntimeError(f"no image in response ({reason})")
 
 
-def make_palette(images: list[Image.Image], colors: int) -> Image.Image:
-    """One palette for all tiles, so colours match across tile borders."""
-    w = sum(i.width for i in images)
-    h = max(i.height for i in images)
-    sheet = Image.new("RGB", (w, h))
-    x = 0
-    for i in images:
-        sheet.paste(i.convert("RGB"), (x, 0))
-        x += i.width
-    return sheet.quantize(colors=colors, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-
-
-def pixelate(img: Image.Image, factor: int, palette: Image.Image) -> Image.Image:
-    small = img.convert("RGB").resize((img.width // factor, img.height // factor), Image.BOX)
-    q = small.quantize(palette=palette, dither=Image.Dither.NONE).convert("RGB")
-    return q.resize(img.size, Image.NEAREST)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--renders", type=Path, required=True, help="directory with <id>.png render tiles")
@@ -107,8 +86,6 @@ def main() -> None:
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--ref", type=Path, action="append", default=[], help="style reference image")
     ap.add_argument("--hints-dir", type=Path, help="prefix for per-tile hint files: <prefix>-<tile>.md")
-    ap.add_argument("--pixel", type=int, default=0, help="pixel-art post-process factor (0 = off)")
-    ap.add_argument("--palette-colors", type=int, default=48)
     args = ap.parse_args()
 
     prompt = args.prompt.read_text()
@@ -147,10 +124,6 @@ def main() -> None:
             if not out:
                 raise RuntimeError("ComfyUI returned no image")
             return out[0], None
-    # Shared palette, taken from the first output (references skew it, e.g. Rio orange) and saved,
-    # so resumed runs keep using the same colours.
-    palette_file = args.out / "palette.png"
-    palette = Image.open(palette_file) if (args.pixel and palette_file.exists()) else None
     args.out.mkdir(parents=True, exist_ok=True)
     total = 0.0
     for tid in args.tiles.split(","):
@@ -185,11 +158,6 @@ def main() -> None:
             print(f"  {tid}: model returned {img.size}, resized to {src.size} (nearest)")
             img = img.resize(src.size, Image.NEAREST)
         img.save(dst)
-        if args.pixel:
-            if palette is None:
-                palette = make_palette([img], args.palette_colors)
-                palette.save(palette_file)
-            pixelate(img, args.pixel, palette).save(dst.with_suffix(".pixel.png"))
         cost = COST_PER_IMAGE.get(args.model, 0.0) if args.backend == "vertex" else 0.0
         total += cost
         dst.with_suffix(".json").write_text(json.dumps({
@@ -198,7 +166,6 @@ def main() -> None:
             "steps": args.steps if args.backend == "comfyui" else None,
             "prompt": str(args.prompt), "seed": args.seed,
             "refs": [str(r) for r in args.ref], "hint": str(hint) if hint and hint.exists() else None,
-            "pixel": args.pixel, "palette_colors": args.palette_colors if args.pixel else None,
             "usage": usage,
             "est_cost_usd": cost, "seconds": round(time.time() - t0, 1),
             "created": datetime.now(timezone.utc).isoformat(),

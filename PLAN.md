@@ -15,10 +15,16 @@ on the pilot, then scale.
 - **Done:** tile planner, headless renderer on Google 3D Tiles, seam checks, pilot rendered
   north-up (32 tiles), training-tile selection, tile pyramid + viewer (prototype map of the
   renders), Gemini image-model script (`pipeline/stylize.py`).
-- **Next:** Phase 4.0, the free style comparison on the PC: code pixelation vs tiny.london LoRA
-  vs the Illustrious pixel-art LoRA (img2img + ControlNet). The user approved it on 2026-11-04.
-  Start with the downloads to the PC (~10 GB). Then a direction is picked, and only then come
-  paid targets or a fine-tune (Phase 4 plan).
+- **Paused: local PC route (4.0b/c)**, 2026-11-04. The PC has a RAM fault (Windows Memory
+  Diagnostic found errors; same file hashes differently on each read; two crashes). The user
+  decided it's not worth buying memory for this: go back to **Nano Banana Pro** for the style.
+  Scripts/workflows for b/c are on branch **`local-model`** (pushed), in case the PC is fixed. 4.0a (code pixelation) is done: the quality bar.
+- **In progress:** Phase 3 style with Nano Banana Pro on the photo renders: `photo-v4` (no grid)
+  is the best so far (see Phase 3). 3×3 block done. $4.84 spent on Vertex.
+- **Next:** seams. Colour levelling failed; context infill works (seam step 2.44 → 1.49) but the
+  filled part is less stylized and one seed invented a harbour: infill-v2 prompt with v4's style
+  section, then a 3×3 block in waves. Option: skip fine-tuning
+  for the pilot and generate it directly (~130 generations ≈ $17, $9 batched; ×2 with 2 seeds).
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
 
@@ -61,6 +67,11 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
       slide = 1 quadrant, 4-bit infill masks, as Isopolis and isometric.nyc).
 - [ ] **Style**: pick a direction and collect 5–10 own reference images in `style/references/`
       (git-ignored). Current references are screenshots of tinyrj/tinygyn: private use only.
+      → **Direction (user, 2026-11-04): `photo-v2` is almost it**, a little more pixelated. Keep
+        the dark cartoon outlines. KEY OBJECTIVE: people must recognise their own address, so
+        keep every building, tree, window, door, shop front, balcony; at the same time it should
+        feel like an 80s arcade game. The sweet spot between the two; tinyrj is the benchmark.
+        Not the invented-v3 look (thick generic cartoon town).
 - [x] Google Maps Platform key (`GOOGLE_MAPS_API_KEY` in `.env`); Vertex AI via ADC
       (project `crafty-haiku-422`, global endpoint, no key needed).
 - [x] **Local image model on the user's PC** (RTX 3070 8 GB, 32 GB RAM, Windows 11, LAN
@@ -127,9 +138,100 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
       references as extra images, keep each building's colours from the input, forbid invented
       water (the script adds a "no water" line for dry tiles), give landmark hints per landmark
       (not per tile) and check them against photos.
+- [ ] **First Nano Banana Pro test on photo renders (2026-11-04, tiles 0_0, 0_-1, $0.54)**:
+      sheets `data/compare/nbp-full.png`, `nbp-crop.png`, `nbp-px.png`.
+      → (Prompt files v1–v3 and v5 removed 2026-11-05, only `photo-v4.md` is kept; v1 is in git
+        history. The notes below are the record.)
+      → `photo-v1` (no refs): almost a copy of the render, a slightly cleaned photo. Too weak.
+      → `photo-v2` + the two tinyrj/tinygyn screenshots: a real redraw. Dark outlines, flat
+        colour with 2–3 shading steps, cartoon trees, clean roofs and streets. Geometry and
+        landmarks kept very well (Södra tornet, Bofills båge, the Slussen site). But it reads as a
+        cel-shaded **illustration, not pixel art**: smooth edges, no pixel grid. Dense old town
+        (0_-1) is less stylized than 0_0.
+      → Code pixelation on top (`pixelate.py` 2× / 3×, 48 colours): gives the grid but muddies
+        the colours and eats the outlines. 2× is the better of the two.
+      → `photo-v3` (= v2 + "every art pixel a 2×2 block, stair-step edges" + "simplify the old
+        town hard"), $0.27: 0_0 faithful but *less* stylized than v2 (2×2-uniform blocks 57 %
+        vs 44 %: a grid only in places). **0_-1 was invented**: a charming generic pixel-art old
+        town with nothing from the render. Lesson: wording like "simplify hard" / "from
+        scratch" invites inventing; outputs vary a lot per tile, so judge on more tiles/seeds.
+      → `pipeline/fidelity.py`: layout (64² luminance) and edge (256² edge map) correlation vs the
+        render. It catches both failures tiny.london filtered: invented 0.07/0.01, photo copy
+        1.00/≥0.93, good v2 0.96–0.98/0.72–0.82. First thresholds: layout < 0.8 → reject,
+        edges > 0.9 → too weak.
+      → `photo-v4` (v2 + "recognise your own building": every window row, door, shop front,
+        balcony, tree; 80s arcade; grid art pixel 2×2; outlines on every building and canopy),
+        4 tiles (0_0 modern, 0_-1 old town, -1_-2 quay/water, -4_0 park) × seeds 1, 2, $1.07.
+        Sheets `data/compare/nbp-v4-*.png`. All 8 pass `fidelity.py` (layout 0.83–0.99).
+        Detail kept very well (windows, dormers, balconies, courtyard trees); water/quay tiles
+        are real pixel art (60 % uniform 2×2 blocks), dense areas still smooth (36–49 %).
+        **Seed 1 invented things**: boats, a red building in the park (-4_0), the Slussen
+        construction site erased to plain asphalt (0_-1); seed 2 was clean. So: generate 2
+        candidates per tile and pick (by score + review), budget ×2.
+      → Grid by post-process: `pixelate.py --factor 2 --colors 0` (darkest pixel
+        where a 2×2 block holds an outline, else the mean) → `data/styled/nbp-photo-v4-s*-px2`.
+        Gives the pixel grid everywhere and keeps outlines and windows. Loses thin *bright*
+        details (lane markings, water sparkles): keep bright outliers too. Palette snap still
+        open (64 colours from 4 tiles shifted hues): build a shared palette from many tiles.
+      → **User verdict (2026-11-05): v4 seed 2 *without* the grid is the best so far.** The
+        grid post-process is kept as a storage/performance option (Phase 6), not as the look.
+      → **3×3 block** (x −1..1, y −1..1), `photo-v4`, seeds 1 + 2, 14 new images, $1.88
+        (`data/stitch/nbp-v4-s{1,2}-block.png`, close-ups `data/compare/nbp-v4-s2-seam-*.png`).
+        At map scale the block reads as one coherent picture. Geometry is continuous across
+        every seam (buildings, streets, tree rows line up), but there is a **tone step**: faint
+        rectangles where one tile is lighter/greener/warmer than its neighbour. `stitch_block`
+        step ratio 1.8–3.3 (renders 0.92–1.06).
+      → `fidelity.py` false reject: 1_-1 (much water) scored layout 0.71–0.78 in both seeds
+        although faithful: recolouring near-black water to bright blue moves the luminance
+        layout. Now reject on layout < 0.5 or edges < 0.4. Small inventions (seed-1 boats,
+        park building) still pass: they need review (Phase 5 review app).
+      → **Why tinygyn/tinyrj look sharper** (user screenshot, measured 2026-11-05): saturation 114
+        vs our v4 84 (render 62); brightness p5–p95 25–243 vs 29–220; per screen pixel their
+        image changes ~3× more gently than ours per native pixel, i.e. the screenshot is ~3×
+        **over-zoom** (viewer magnifies past native resolution, blocky), not more detail. Plus
+        light rim highlights next to the dark outlines and chunky block-built tree canopies.
+        Free colour grade on v4 s2 (levels p4–p97 → 0–255, saturation ×1.35) → sat 139,
+        5–239 (`data/compare/nbp-v4-grade.png`): much punchier, slight overshoot; try ×1.25.
+        **User 2026-11-05: no grade for now, keep v4 as it is.** User's observation: tinyrj's
+        surfaces are *flatter* (evened out, few gradients), so contrast there only adds punch; on
+        our surfaces, which still hold soft gradients and texture, the grade looks smudgy. So
+        flatness comes first (prompt: "each surface one flat colour, no gradients or texture", or
+        a flattening post-process), a grade at most after that. If a grade comes back: one global
+        setting for all tiles (per-tile levels add tone seams). Still open: viewer over-zoom
+        (OpenSeadragon `maxZoomPixelRatio` > 1, `image-rendering: pixelated`); "light rim
+        highlight on roof tops and edges" in the prompt.
+      → `photo-v5` (v4 + "every surface ONE flat colour, no gradients/texture" + "light rim
+        highlight on roof tops, parapets, sunlit corners"), seed 2, 0_0 + 0_-1, $0.27
+        (`data/compare/nbp-v5.png`). Fidelity ok (0.98/0.79, 0.80/0.65). Flatness (pixels
+        within 3 levels of their neighbours): render 12–13 %, v4 25–29 %, v5 24 % / 39 %,
+        tinygyn screenshot ~30 %. So v4 is already about as flat overall; v5 only helped the old
+        town (tin-roof photo texture mostly gone). The visible difference to tinyrj is *where*
+        the variation is (leftover photo texture on roofs and trees vs a few bold tones), and their
+        city has simpler flat-roofed blocks. Prompting is near its limit here; next lever: a
+        free edge-preserving flattening post-process (keeps outlines, windows, edges).
+      → **Seams (2026-11-05).** Geometry of v4 outputs is pixel-exact vs the render (phase
+        correlation: 0 px shift, also locally in 4×4 cells), so seams are not displacement but
+        different drawing on each side: pixel step at the seam 26 vs 10.7 inside (render 10.5).
+      → (a) Colour levelling (half the smoothed strip difference per side, faded over 384 px):
+        tone step 15.8 → 5.6 but visibly *worse*: murky patches, because the strips beside a
+        seam hold real content differences too (render baseline 14.5). Dropped, script deleted.
+      → (b) **Context infill** (`pipeline/infill.py`, `style/prompts/infill-v1.md`): window of
+        quadrants (1..2, 0..1) straddling the 0_0 | 1_0 seam; left half = finished v4 art, right
+        half = render with a 2 px red frame; keep the right half of the output, paste the
+        original left half back (crop, never blend). 2 seeds, $0.27
+        (`data/compare/infill-v1*.png`). Seam step ratio 2.44 → 1.49 (render 0.96); by eye the
+        seam is nearly gone. The model's *own* left half joins at 1.05, but it changes the
+        finished part a little (mean drift 7), so pasting the original back leaves a small step.
+        Problems: the filled half is **less stylized** than v4 (seed 1 kept photo texture on the
+        gravel/construction area, fewer outlines), and **seed 2 invented a harbour with boats**
+        where the render has a park (passed `fidelity.py`: layout 0.90, too lenient for half-windows).
+      → Next: infill-v2 prompt with v4's full style section (the frame prompt is too weak on
+        style); judge on 2–3 seams. Fidelity check on the filled part only, stricter. Then the
+        wave order for a 3×3 block (seed tiles, then strips, then corners; Phase 5).
 - [ ] Iterate on ~10 varied tiles with `pipeline/stylize.py` (Vertex AI; Nano Banana Pro was
       clearly better than Nano Banana 2 on landmarks; $0.13 vs $0.067 per 1K image; `--ref`,
-      `--hints-dir`, `--pixel N` = half-resolution + shared palette; 429s retried).
+      `--hints-dir`; 429s retried). The old `--pixel` palette post-process was removed
+      2026-11-05; the pixel grid lives in `pipeline/pixelate.py`.
       Pixel post-process: build the shared palette from several tiles including water.
 - [ ] Generate 100–300 pairs from the training area and review by hand.
       → `config/training.yaml` (~40 km² of central Stockholm, same grid as the pilot, checked by
@@ -165,7 +267,7 @@ over the LAN.
 
 - [ ] **4.0 Free comparison on the PC, before paying for anything.** Use the same tiles
       (0_0, 0_-1 + the 3×3 block). Compare side by side:
-      a. Code pixelation only (`stylize.py --pixel`): the baseline "pixelated photo".
+      a. Code pixelation only: the baseline "pixelated photo".
       b. **tiny.london LoRA as it is** (private use is fine under its research licence). This
          shows whether Qwen-Image-2.1 + LoRA runs in 8 GB (int8 + offload) and gives a quality
          bar. tinysthlm.com already uses it, so our own style must differ.
@@ -177,6 +279,30 @@ over the LAN.
          no credit needed; check the Illustrious base licence separately.
       d. Optionally 1–2 other pixel-art LoRAs for Qwen-Image (edit models keep geometry better).
       The user picks a direction. That decides whether we need paid targets at all.
+      → Tiles: 0_0, 0_-1 + the 3×3 block x −1..1, y −1..1. Sheet: `pipeline/compare.py`
+        (columns = runs, `--crop` for 1:1 details, nearest only) → `data/compare/`.
+      → **a. done** (box mode of `pipeline/pixelate.py`, removed 2026-11-05; palette shared by all 9 tiles, built from the
+        downscaled tiles): `data/styled/4.0a-pixel-f{2,4,8}-c*`, stitched in `data/stitch/`.
+        f2 is still a photo; f4/c32 reads as a mosaic photo (no outlines, windows smeared,
+        colours muddier than the render); f8 is mush. No seams: 1024 divides by every factor,
+        so blocks align at tile borders (`stitch_block`'s step ratio is meaningless here: rows
+        inside a block are identical). Quality bar: a model must add outlines, flat shading
+        and legible windows.
+      → b/c code is on branch `local-model`, paused (PC RAM fault, see Status).
+      → b. setup: Comfy-Org's "Qwen Image 2.1 Turbo: Image edit" template, prompt enhancer off
+        (`comfyui.qwen21_edit_workflow`: UNETLoader → LoRA → QwenImage21Cache,
+        TextEncodeQwenImage21 gives the edit latent, 8 manual turbo sigmas, euler, cfg 1).
+        Files: `qwen_image_2.1_turbo_int8_convrot` 7.3 GB (what the LoRA was trained on),
+        `qwen3vl_8b_int8_convrot` 9.4 GB, VAE 0.7 GB, `tiny-london-v3` 0.16 GB. The README gives
+        no ComfyUI workflow ("not tested in other tools"), so this is our guess at feeding the input.
+        Run: `stylize.py --backend comfyui --workflow qwen21 --lora tiny-london-v3.safetensors
+        --frame --prompt style/prompts/tiny-london.md`. Risk: 8 GB VRAM with a 7.3 GB DiT means
+        offloading. If it's too slow or OOM, try `qwen3vl_8b_w4a8` or a GGUF Q5 DiT.
+      → c. setup: Illustrious XL v0.1 (HF, not gated, Fair AI Public License 1.0-SD: check
+        before any public use) + xinsir ControlNet union SDXL promax (Apache 2.0), img2img
+        (`comfyui.sdxl_controlnet_workflow`, euler a, 28 steps, cfg 6, canny or tile). Run:
+        `--workflow sdxl --lora pixelart.safetensors --prompt style/prompts/pixelart-sdxl-v1.md
+        --denoise 0.3…0.7`. The civitai file needs a login token (see `gpu/README.md`).
       → An SDXL route would also make **training on the PC** possible (SDXL LoRA training fits
         in 8 GB). Qwen-Image training does not.
 - [ ] **4.1 Base model decision**, from 4.0: Qwen-Image-2.1-Turbo (the proven recipe) or
@@ -227,6 +353,12 @@ Deliverable: every quadrant in the pilot approved.
       north direction, screen→lon/lat, attributions. Needs a quadrant mode for generated art.
 - [x] Prototype: `dist/sodermalm-renders/` (north-up renders, 8192×4096, 11 MB).
 - [ ] Lower zoom levels for pixel art: compare downscaling methods (box + palette snap, …).
+- [ ] Storage size (measured 2026-11-05, 4 v4 tiles, per 1024² tile): v4 PNG 1,968 KB, WebP
+      lossless 1,453 KB, WebP q90 362 KB; with the 2× outline grid at 1024² 702 / 501 / 270 KB,
+      stored at 512² 545 / 416 / 121 KB (browser upscales with `image-rendering: pixelated`; 4×
+      fewer pixels to decode, one pyramid level less). Pilot: irrelevant (~50 MB). City scale
+      (thousands of tiles): a few GB vs < 1 GB. Decide at build time (no regeneration needed);
+      check lossy WebP by eye on hard pixel edges first.
 - [ ] Optional: single PMTiles file.
 
 ## Phase 7 — Web viewer
