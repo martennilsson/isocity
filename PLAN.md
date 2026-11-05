@@ -8,7 +8,7 @@ Whether it becomes a game is open.
 Pilot area: **Södermalm, Stockholm** (`config/area.yaml`). Prove the whole pipeline end to end
 on the pilot, then scale.
 
-## Status (2026-11-04)
+## Status (2026-11-05)
 
 - **Data source: Google Photorealistic 3D Tiles, in closed mode** (user decision, 2026-11-04).
   See "Closed mode" below.
@@ -20,11 +20,14 @@ on the pilot, then scale.
   decided it's not worth buying memory for this: go back to **Nano Banana Pro** for the style.
   Scripts/workflows for b/c are on branch **`local-model`** (pushed), in case the PC is fixed. 4.0a (code pixelation) is done: the quality bar.
 - **In progress:** Phase 3 style with Nano Banana Pro on the photo renders: `photo-v4` (no grid)
-  is the best so far (see Phase 3). 3×3 block done. ~$6.00 spent on Vertex.
-- **Next:** seams by **overlapping 1K generations + min-error path cuts** (first test: seam step
-  1.45 → 0.53). Colour levelling, Nano Banana frame infill and bigger windows (2K/4K) all tried
-  and dropped (see Phase 3). Design the overlap grid in `plan_tiles`, then a 3×3 test. Option: skip fine-tuning
-  for the pilot and generate it directly (~130 generations ≈ $17, $9 batched; ×2 with 2 seeds).
+  is the best so far (see Phase 3). ~$7.20 spent on Vertex.
+- **Seams solved (3×3 test, 2026-11-05):** overlapping 1K generation windows (`plan_tiles`
+  `generation:`, stride 768, 256 px bands) composed by `pipeline/mosaic.py` with min-error path
+  cuts: step ratio mean 0.84 (straight cuts 1.80; renders ~0.9). Colour levelling, Nano Banana
+  frame infill and bigger windows (2K/4K) were tried and dropped (see Phase 3).
+- **Next:** the whole pilot = **40 windows ≈ $5.40** per candidate (×2 for 2 seeds, pick per
+  window): map.db + batch runner + review (Phase 5), then the pyramid from the mosaic (Phase 6).
+  Fine-tuning (Phase 4) not needed for the pilot.
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
 
@@ -252,6 +255,18 @@ validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or
         stride must stay on the plan grid (`plan_tiles` only: maybe stride = 1 quadrant with
         alternate windows, or a sub-quadrant grid), and cuts where 3–4 windows meet (sequential
         cuts, as in image quilting).
+      → **Done (2026-11-05):** a fixed lattice in `plan_tiles` (`generation:` in area.yaml,
+        anchored at the screen origin so boundary edits don't move windows): window (i, j) =
+        core [i·768, (i+1)·768)² grown by 128 px. Pilot: 10 × 4 = **40 windows**. Not on the
+        quadrant grid (768 = 1.5 quadrants): the mosaic is cut back into plan tiles after
+        composing. `pipeline/mosaic.py cut` writes window renders (so `stylize`/`fidelity` run
+        on them unchanged), `compose` places windows in raster order with a vertical cut in the
+        left band and a horizontal one in the top band (corners: both masks, as in quilting),
+        cuts kept 16 px off the band edges. Check: composing the renders themselves gives the
+        render back exactly (step ratios 0.78–1.05 = the baseline). **3×3 test** (windows
+        −1..1, `photo-v4` s2, $1.21): all 9 pass fidelity; path cuts step mean 0.84, max 1.52
+        (a faint tone shift across a plaza), straight cuts 1.80 / 2.78 (visible lines);
+        `data/mosaic/nbp-v4-s2/canvas-marked.png`. `infill.py` + `infill-v1` removed.
 - [ ] Iterate on ~10 varied tiles with `pipeline/stylize.py` (Vertex AI; Nano Banana Pro was
       clearly better than Nano Banana 2 on landmarks; $0.13 vs $0.067 per 1K image; `--ref`,
       `--hints-dir`; 429s retried). The old `--pixel` palette post-process was removed
@@ -355,26 +370,29 @@ Deliverable: a model + `pipeline/generate.py`.
 
 ## Phase 5 — Generate the whole map
 
-- [ ] `data/map.db` (SQLite): one row per quadrant — position, render path, output, status
-      (`pending / generated / approved / rejected`), notes.
-- [ ] Sliding 1024² window stepped by one quadrant; seeds first, then a seam planner grows outward
-      in waves (Isopolis: 440 renders → 1,519 generations in 67 waves). Don't generate between
-      finished quadrants on opposite sides; fill strips as 2×1 blocks with gaps, then the gaps.
-- [ ] Rejection guard vs a context-free baseline; water windows stamped instead of generated;
-      regenerate a bad quadrant with verified context around it.
-- [ ] Pixel-overlap experiment for *generated* tiles (renders are exact at `overlap_px` 0); crop,
-      never blend.
-- [ ] Resumable overnight batch runner.
-- [ ] **Review app** (`review/`): generated quadrants over a map, reject/regenerate, render vs
-      result side by side.
+- [x] ~~Sliding 1024² window stepped by one quadrant + seam planner in waves~~ → replaced by
+      independent overlapping windows + min-error path cuts (`pipeline/mosaic.py`, Phase 3
+      notes): no ordering, all windows can run in parallel, 40 for the pilot.
+- [ ] `data/map.db` (SQLite): one row per **generation window** (not per quadrant) — position,
+      render path, candidates (seed, output, fidelity scores), chosen candidate, status
+      (`pending / generated / approved / rejected`), notes. Regenerating one window only
+      re-cuts its 4 bands.
+- [ ] Rejection guard: `fidelity.py` per candidate (reject / check); water-only windows stamped
+      instead of generated?
+- [ ] Tone shifts across flat areas (lawns, plazas) are what's left of the seams: if visible on
+      the whole pilot, pick the seed per window that agrees best with its neighbours in the bands.
+- [ ] Resumable batch runner (stylize is already resumable per file; 429s retried).
+- [ ] **Review app** (`review/`): composed mosaic with window outlines, per window the
+      candidates vs render, choose / regenerate.
 
-Deliverable: every quadrant in the pilot approved.
+Deliverable: every generation window in the pilot approved, mosaic composed.
 
 ## Phase 6 — Tile pyramid
 
 - [x] `pipeline/build_pyramid.py`: pyvips stitch over the plan grid + Deep Zoom (512 px, WebP);
       `--style photo` (box shrink) or `pixel` (lossless, nearest); `manifest.json` with origin,
-      north direction, screen→lon/lat, attributions. Needs a quadrant mode for generated art.
+      north direction, screen→lon/lat, attributions. Generated art: `mosaic compose`
+      writes plan tiles (`<tile id>.png`), so the existing tile mode works on its output.
 - [x] Prototype: `dist/sodermalm-renders/` (north-up renders, 8192×4096, 11 MB).
 - [ ] Lower zoom levels for pixel art: compare downscaling methods (box + palette snap, …).
 - [ ] Storage size (measured 2026-11-05, 4 v4 tiles, per 1024² tile): v4 PNG 1,968 KB, WebP

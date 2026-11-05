@@ -8,6 +8,7 @@ from pipeline.plan_tiles import (
     ecef_to_geodetic,
     geodetic_to_ecef,
     load_area,
+    gen_window_rect_px,
     plan,
     window_rect_px,
 )
@@ -128,3 +129,27 @@ def test_quadrant_records_match_tiles(area):
     q = result["quadrant_size_px"]
     for c in result["quadrants"]:
         assert c["screen_rect_px"] == [c["qx"] * q, c["qy"] * q, (c["qx"] + 1) * q, (c["qy"] + 1) * q]
+
+
+def test_generation_windows_overlap_by_band_and_cover_region(area):
+    result = plan(*area)
+    g = result["generation"]
+    s, band = g["stride_px"], g["band_px"]
+    by_ij = {(w["i"], w["j"]): w for w in g["windows"]}
+    assert by_ij
+    for (i, j), w in by_ij.items():
+        assert w["rect_px"] == list(gen_window_rect_px(i, j, s, g["window_px"]))
+        x0, y0, x1, y1 = w["rect_px"]
+        assert (x1 - x0, y1 - y0) == (g["window_px"], g["window_px"])
+        if (i + 1, j) in by_ij:
+            assert x1 - by_ij[(i + 1, j)]["rect_px"][0] == band
+            assert by_ij[(i + 1, j)]["core_rect_px"][0] == w["core_rect_px"][2]
+        if (i, j + 1) in by_ij:
+            assert y1 - by_ij[(i, j + 1)]["rect_px"][1] == band
+    # a full rectangle of windows whose cores cover the boundary
+    iis, jjs = {i for i, _ in by_ij}, {j for _, j in by_ij}
+    assert len(by_ij) == len(iis) * len(jjs)
+    bx = [c[0] for c in result["screen_boundary_px"]]
+    by = [c[1] for c in result["screen_boundary_px"]]
+    assert min(iis) * s <= min(bx) and (max(iis) + 1) * s >= max(bx)
+    assert min(jjs) * s <= min(by) and (max(jjs) + 1) * s >= max(by)

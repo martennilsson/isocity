@@ -28,3 +28,11 @@ tiles:
   margin_px: 256           # include tiles this far outside the boundary (tall buildings, context)
   overlap_px: 0            # extra pixels rendered/generated on each side of every window and
                            # cropped away at stitch time. Test 0 vs ~3 on a 3x3 block.
+
+# Generation windows (Phase 5): the image model draws window_px squares on a lattice of
+# stride_px anchored at the screen origin; neighbours share a band of window_px - stride_px
+# where pipeline/mosaic.py cuts between them along the min-error path. 1K per window: bigger
+# windows lose detail (Phase 3 test).
+generation:
+  window_px: 1024
+  stride_px: 768           # 256 px shared bands

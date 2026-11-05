@@ -12,6 +12,12 @@ each is rendered `overlap_px` larger on every side so stitching/generation can c
 edge artefacts. Because the camera is orthographic and fixed, all renders share one pixel
 grid: any infill window (any quadrant offset) can be cut from the base renders, see
 `window_rect_px`.
+Generation windows (optional `generation:` in area.yaml): the image model draws window_px
+squares on a lattice of stride_px, anchored at the screen origin so boundary edits never move
+them. Window (i, j) owns the core [i*S, (i+1)*S) x [j*S, (j+1)*S) and is that core grown by
+(window_px - stride_px) / 2 on every side, so neighbours share a band of window_px - stride_px
+pixels where `pipeline/mosaic.py` cuts between them. All windows whose core meets the region's
+bounding box are listed (a full rectangle of windows), see `gen_window_rect_px`.
 
 Usage:
     uv run python -m pipeline.plan_tiles --area config/area.yaml --out data/plan/sodermalm.json \
@@ -183,6 +189,30 @@ def window_rect_px(
     )
 
 
+def gen_window_rect_px(i: int, j: int, stride: int, window: int) -> tuple[int, int, int, int]:
+    """Screen rect (x0, y0, x1, y1) of generation window (i, j): its core grown by the half band."""
+    if window <= stride or (window - stride) % 2:
+        raise ValueError("generation window_px must exceed stride_px by an even number of pixels")
+    m = (window - stride) // 2
+    return i * stride - m, j * stride - m, (i + 1) * stride + m, (j + 1) * stride + m
+
+
+def plan_windows(gen: dict, region_bounds, tiles: list[dict]) -> dict:
+    s, w = gen["stride_px"], gen["window_px"]
+    minx, miny, maxx, maxy = region_bounds
+    cover = (min(t["render_rect_px"][0] for t in tiles), min(t["render_rect_px"][1] for t in tiles),
+             max(t["render_rect_px"][2] for t in tiles), max(t["render_rect_px"][3] for t in tiles))
+    windows = []
+    for j in range(math.floor(miny / s), math.ceil(maxy / s)):
+        for i in range(math.floor(minx / s), math.ceil(maxx / s)):
+            rect = gen_window_rect_px(i, j, s, w)
+            if rect[0] < cover[0] or rect[1] < cover[1] or rect[2] > cover[2] or rect[3] > cover[3]:
+                raise ValueError(f"generation window {i},{j} {rect} reaches outside the rendered tiles {cover}")
+            windows.append({"id": f"w{i}_{j}", "i": i, "j": j, "rect_px": list(rect),
+                            "core_rect_px": [i * s, j * s, (i + 1) * s, (j + 1) * s]})
+    return {"window_px": w, "stride_px": s, "band_px": w - s, "windows": windows}
+
+
 def plan(cfg: dict, boundary_lonlat) -> dict:
     proj = Projection.from_config(cfg)
     size = cfg["tiles"]["render_size_px"]
@@ -243,6 +273,7 @@ def plan(cfg: dict, boundary_lonlat) -> dict:
                 )
 
     east, north, up = proj.enu_axes_ecef
+    gen = cfg.get("generation")
     return {
         "area": cfg["name"],
         "config": cfg,
@@ -269,6 +300,7 @@ def plan(cfg: dict, boundary_lonlat) -> dict:
         "screen_boundary_px": [list(c) for c in screen_boundary.exterior.coords],
         "tiles": tiles,
         "quadrants": quadrants,
+        "generation": plan_windows(gen, region.bounds, tiles) if gen else None,
     }
 
 
@@ -330,9 +362,11 @@ def main() -> None:
 
     n_tiles = len(result["tiles"])
     n_inside = sum(t["inside_boundary"] for t in result["tiles"])
+    n_win = len(result["generation"]["windows"]) if result["generation"] else 0
     print(
         f"{result['area']}: {n_tiles} render tiles ({n_inside} touching boundary) at "
-        f"{result['render_size_px']} px, {len(result['quadrants'])} quadrants -> {args.out}"
+        f"{result['render_size_px']} px, {len(result['quadrants'])} quadrants, "
+        f"{n_win} generation windows -> {args.out}"
     )
 
 
