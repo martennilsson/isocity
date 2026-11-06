@@ -38,7 +38,9 @@ on the pilot, then scale.
   (see "Resolution" below).
 - **Pilot is zoomable in the viewer** (2026-11-06): `dist/sodermalm`, run
   `cd viewer && npm run viewer -- dev --map ../dist/sodermalm` → http://127.0.0.1:5180/.
-- **Next:** the one land invention left: buildings drawn on the open Skeppsbron quay (w2_-2,
+- **Next (user, 2026-11-06): move forward; quality issues (seams, Skeppsbron) deferred.**
+  Map delivery must be fast and snappy for the game (Phase 7).
+- **Deferred:** the one land invention left: buildings drawn on the open Skeppsbron quay (w2_-2,
   top right); then map.db + review (Phase 5), pyramid from the mosaic (Phase 6).
   Fine-tuning (Phase 4) not needed for the pilot.
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
@@ -435,8 +437,22 @@ Deliverable: a model + `pipeline/generate.py`.
 - [ ] Bright, photo-looking green strip at the west edge of the pilot (Mariaberget slope, left of
       x≈300 px in the canvas): check if it's a window that kept photo texture.
 - [ ] Rejection guard: `fidelity.py` per candidate (reject / check).
-- [ ] Tone shifts across flat areas (lawns, plazas) are what's left of the seams: if visible on
-      the whole pilot, pick the seed per window that agrees best with its neighbours in the bands.
+- [ ] **Seams where neighbours drew the same object differently** (user, 2026-11-06: Bofill's
+      arc, w-1_0 | w0_0: roof grey vs mint, flat vs detailed lawn). No cut can hide it: the
+      object is wider than the 256 px band.
+      → Tried: the finished neighbour(s) as extra reference images ("match them where they
+        overlap"). Both 4 and 1 neighbours: REJECT, the model drew a generic invented town and
+        ignored the render ($0.27). Dropped, code reverted.
+      → **Works: more seeds, pick by agreement.** Measure = mean colour difference along the
+        best cut in the shared band. w0_0 seeds 2/4/5: arc seam 30.2 / 35.4 / 22.4 → seed 5
+        adopted (`data/styled/nbp-v4-s5-win`); by eye the arc now nearly matches.
+      → Ranked all land seams: ~20 at ≥ 28 (about what the arc was), many in the west columns
+        (w-5_*, w-4_*). Proposed: for each bad seam, 2 more seeds for its worse window, choose
+        by summed agreement with all neighbours (+ fidelity ok). ≈ 12 windows × 2 ≈ $3.2.
+        Make the scorer a pipeline command (`mosaic agree`), not a scratch script.
+      → **Deferred (user, 2026-11-06): move forward, revisit quality later.** Scratch scorer
+        logic: per shared band, `band_cut` then mean |A−B| along the path; skip bands > 80 %
+        painted water.
 - [ ] Resumable batch runner (stylize is already resumable per file; 429s retried).
 - [ ] **Review app** (`review/`): composed mosaic with window outlines, per window the
       candidates vs render, choose / regenerate.
@@ -475,6 +491,32 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
       (static site in the map folder). Mini-map, compass, lat/lon under the cursor, attribution,
       shareable `#x,y,zoom` (plan screen px, stable across rebuilds).
 - [ ] `image-rendering: pixelated` at high zoom, smooth at low zoom (only `style: pixel` so far).
+- [ ] **Fast and snappy is a hard requirement** (user, 2026-11-06): the game engine will add CPU
+      work later, so the map layer must cost almost nothing per frame. Tiles loaded on demand
+      (already: OpenSeadragon, Deep Zoom 512 px, only visible tiles). To do:
+      - [x] **Baseline measured** (2026-11-06, `viewer/bench.ts`: `npm run bench -- --site
+        ../dist/sodermalm --label L --out ../data/bench/L.json [--query drawer=canvas]`).
+        Chromium with GPU (M1, Metal), 1600×1000 at device scale 2; input sent from inside
+        the page once per frame; an idle phase as calibration (60 fps, 16.7 ms).
+        | drawer | cold load | pan fps (p50/p95 ms) | zoom fps | main thread busy | decode (main thread) |
+        |---|---|---|---|---|---|
+        | webgl (OSD default) | 1.5 s | 23.5 (33/67) | 25 | 9–12 % | 256 / 461 ms |
+        | **canvas** | 0.7 s | **60 (16.7/16.7)** | **60** | 11–12 % | 343 / 700 ms |
+        | html | 1.0 s | 60 | 60 | 13–14 % | n/a (img elements) |
+        Cold load on a 40 Mbit/s, 30 ms link: 2.9 s, 43 tiles, 12 MB.
+        → **Viewer now uses the canvas drawer** (`?drawer=` overrides). The OSD WebGL drawer
+          was the whole bottleneck, not JS (no long tasks at all).
+        → Left for the game: all image decoding is on the main thread (0.3–0.7 s per pan/zoom
+          sequence), and ~12 % main-thread time while moving. Target for the own renderer:
+          decode in a worker, < 5 % main thread while panning, 60 fps with game CPU load.
+      - own WebGL tile renderer that the game shares (one GL context, one render loop): tiles
+        decoded off the main thread (`createImageBitmap` in a worker), uploaded once as
+        textures, pan/zoom = a transform, prefetch one ring around the view, LRU texture cache;
+        OpenSeadragon owns its own loop and DOM, which suits a viewer, not a game;
+      - content-hashed tile URLs + long immutable cache headers (as tinygyn: `?v=<n>-<hash>`);
+      - tile size / format per level (tinygyn serves ~1.5 MB full-res tiles, lighter `-x2`
+        levels, and separate small overlay layers: `life.js` ~65 kB animated tiles,
+        `tiltshift.js`; plus manifest/overview JSON polled about once a minute).
 - [ ] Later: place labels, day/night palette, animated details (boats, trains on real timetables).
 
 ## Phase 8 — Hosting (only after leaving closed mode)

@@ -28,8 +28,12 @@ async function main() {
   $('needle').setAttribute('transform', `rotate(${(Math.atan2(nx, -ny) * 180) / Math.PI})`);
   if (pixel) $('map').classList.add('pixelated');
 
+  // Canvas drawer: 60 fps panning/zooming vs ~24 fps for OpenSeadragon's default WebGL drawer
+  // (viewer/bench.ts, 2026-11-06). ?drawer=webgl|canvas|html overrides, for benchmarking.
+  const drawer = new URLSearchParams(location.search).get('drawer') ?? 'canvas';
   const viewer = OpenSeadragon({
     element: $('map'),
+    drawer: drawer as any,
     tileSources: `./${m.dzi}`,
     showNavigationControl: false,
     showNavigator: true,
