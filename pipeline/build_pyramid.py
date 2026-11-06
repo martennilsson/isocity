@@ -56,7 +56,7 @@ def stitch(plan: dict, tiles_dir: Path) -> tuple[pyvips.Image, list[int], list[s
             if t is None:
                 cells.append(blank)
                 continue
-            img = pyvips.Image.new_from_file(str(tiles_dir / f"{t['id']}.png"), access="sequential")
+            img = pyvips.Image.new_from_file(str(tiles_dir / f"{t['id']}.png"))  # random access: read twice (trim, dzsave)
             if img.bands == 3:
                 img = img.bandjoin(255)
             sx0, sy0, sx1, sy1 = t["screen_rect_px"]
@@ -67,6 +67,12 @@ def stitch(plan: dict, tiles_dir: Path) -> tuple[pyvips.Image, list[int], list[s
                 attributions.update(json.loads(side.read_text()).get("attributions", []))
     image = pyvips.Image.arrayjoin(cells, across=x1 - x0 + 1)
     origin = [x0 * size, y0 * size]  # plan screen px of the image's top-left pixel
+    # Crop to the opaque content: a mosaic covers less than the tile grid, and transparent
+    # margins get filled with stray edge pixels in the nearest-neighbour levels.
+    left, top, w, h = image[3].find_trim(threshold=0.5, background=[0])
+    if w and h and (w, h) != (image.width, image.height):
+        image = image.crop(left, top, w, h)
+        origin = [origin[0] + left, origin[1] + top]
     return image, origin, sorted(attributions)
 
 

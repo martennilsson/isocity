@@ -43,6 +43,11 @@ model's own water, then flat colour + stable highlight dashes). Seam step ratio 
 **Progress view:** `data/HEAD.png`, regenerated with `pipeline/head.py` after every change to
 the result. Obsolete outputs were deleted on 2026-11-06; keep `data/` to what's in use.
 
+**Viewer:** the pilot is a zoomable map in `dist/sodermalm` (`cd viewer && npm run viewer -- dev
+--map ../dist/sodermalm`). Rebuild after recomposing:
+`uv run python -m pipeline.build_pyramid --plan data/plan/sodermalm.json --tiles-dir
+data/mosaic/nbp-v4-pilot --out dist/sodermalm --style pixel --title "Södermalm"`.
+
 ## Next step
 
 The last land invention: Gamla Stan buildings on the open Skeppsbron quay (w2_-2). Then map.db,

@@ -12,7 +12,9 @@ Two steps around `pipeline.stylize`:
            middle of the band instead (for comparison).
            Writes canvas.png, canvas-marked.png (cuts in red), cuts.json (per cut: colour
            difference along it and the seam step ratio, ~1 = invisible, as stitch_block) and
-           <tile id>.png (RGBA) for every plan tile the canvas touches, transparent outside it.
+           <tile id>.png (RGBA) for every plan tile the canvas touches, transparent outside it,
+           and <tile id>.json with the data attributions of the windows over it (followed back
+           through the stylize sidecar to the window render's sidecar, written by `cut`).
            --water-from <renders>: after the cuts, paint open water flat (pipeline/water.py),
            found in the renders and grown into the model's own water; writes water-mask.png.
            Seam stats then skip the stretches of a cut that run through painted water.
@@ -40,6 +42,33 @@ from pipeline import water as water_mod
 GUARD_PX = 16  # cuts stay this far from the band edges (window borders draw worst)
 STEP_BAND = range(2, 7)  # columns/rows beside a cut used as the "normal" step baseline
 MIN_SEAM_ROWS = 32  # cuts with fewer non-water rows than this get no step ratio
+
+
+def _overlaps(a, b) -> bool:
+    return max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
+
+
+def source_attributions(plan: dict, src_dir: Path, rect) -> list[str]:
+    """Data attributions of the render tiles in src_dir under screen rect (from <id>.json)."""
+    found = set()
+    for t in plan["tiles"]:
+        side = src_dir / f"{t['id']}.json"
+        if _overlaps(t["screen_rect_px"], rect) and side.exists():
+            found.update(json.loads(side.read_text()).get("attributions", []))
+    return sorted(found)
+
+
+def window_attributions(styled: Path, wid: str) -> list[str]:
+    """Attributions of a styled window: its stylize sidecar points at the window render, whose
+    sidecar (written by `cut`) holds the attributions of the render tiles it came from."""
+    side = styled / f"{wid}.json"
+    if not side.exists():
+        return []
+    meta = json.loads(side.read_text())
+    if "attributions" in meta:
+        return meta["attributions"]
+    src = Path(meta.get("source", "")).with_suffix(".json")
+    return json.loads(src.read_text()).get("attributions", []) if src.is_file() else []
 
 
 def cut_rect(plan: dict, src_dir: Path, rect) -> np.ndarray:
@@ -176,11 +205,16 @@ def compose(plan: dict, styled: Path, out: Path, windows: list[dict], straight: 
     (out / "cuts.json").write_text(json.dumps({"styled": str(styled), "straight": straight,
                                                "water_from": str(water_from) if water_from else None,
                                                "canvas_rect_px": [cx0, cy0, cx1, cy1], "cuts": report}, indent=1))
+    credits = {w["id"]: window_attributions(styled, w["id"]) for w in windows}
+    if not any(credits.values()):
+        print("  WARNING: no data attributions found (run `cut` again to write window sidecars)")
     for t in plan["tiles"]:
         sx0, sy0, sx1, sy1 = t["screen_rect_px"]
         ix0, iy0, ix1, iy1 = max(sx0, cx0), max(sy0, cy0), min(sx1, cx1), min(sy1, cy1)
         if ix0 >= ix1 or iy0 >= iy1:
             continue
+        attributions = sorted({a for w in windows if _overlaps(w["rect_px"], t["screen_rect_px"]) for a in credits[w["id"]]})
+        (out / f"{t['id']}.json").write_text(json.dumps({"tile": t["id"], "attributions": attributions}))
         tile = np.zeros((sy1 - sy0, sx1 - sx0, 4), np.uint8)  # transparent outside the canvas
         tile[iy0 - sy0:iy1 - sy0, ix0 - sx0:ix1 - sx0, :3] = canvas[iy0 - cy0:iy1 - cy0, ix0 - cx0:ix1 - cx0]
         tile[iy0 - sy0:iy1 - sy0, ix0 - sx0:ix1 - sx0, 3] = 255
@@ -216,6 +250,9 @@ def main() -> None:
         args.out.mkdir(parents=True, exist_ok=True)
         for w in windows:
             Image.fromarray(cut_rect(plan, args.renders, w["rect_px"])).save(args.out / f"{w['id']}.png")
+            (args.out / f"{w['id']}.json").write_text(json.dumps(
+                {"window": w["id"], "rect_px": w["rect_px"],
+                 "attributions": source_attributions(plan, args.renders, w["rect_px"])}))
         print(f"  {len(windows)} window renders -> {args.out}: --tiles={','.join(w['id'] for w in windows)}")
     else:
         compose(plan, args.styled, args.out, windows, args.straight, args.water_from)

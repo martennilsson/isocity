@@ -36,6 +36,8 @@ on the pilot, then scale.
   kept renders, windows, the s2/s3 candidates, the pilot mosaic, training renders, the LoRA).
 - **Resolution: 0.25 m/px stays for now** (user, 2026-11-06); scaling up later is kept possible
   (see "Resolution" below).
+- **Pilot is zoomable in the viewer** (2026-11-06): `dist/sodermalm`, run
+  `cd viewer && npm run viewer -- dev --map ../dist/sodermalm` → http://127.0.0.1:5180/.
 - **Next:** the one land invention left: buildings drawn on the open Skeppsbron quay (w2_-2,
   top right); then map.db + review (Phase 5), pyramid from the mosaic (Phase 6).
   Fine-tuning (Phase 4) not needed for the pilot.
@@ -447,7 +449,17 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
       `--style photo` (box shrink) or `pixel` (lossless, nearest); `manifest.json` with origin,
       north direction, screen→lon/lat, attributions. Generated art: `mosaic compose`
       writes plan tiles (`<tile id>.png`), so the existing tile mode works on its output.
-- [x] Prototype: `dist/sodermalm-renders/` (north-up renders, 8192×4096, 11 MB).
+- [x] Prototype: `dist/sodermalm-renders/` (north-up renders, 8192×4096, 11 MB). Removed
+      2026-11-06, replaced by the generated map.
+- [x] **Pilot pyramid from the mosaic** (2026-11-06): `dist/sodermalm/`, 7936×3328, 164 tiles,
+      43 MB, `--style pixel`. Built from `data/mosaic/nbp-v4-pilot`. Two fixes:
+      → Data credit is carried through: `mosaic cut` writes `<window>.json` with the render
+        tiles' attributions; `compose` follows each styled window's sidecar (`source`) back to
+        it and writes `<tile>.json`; build_pyramid already reads those. (`nbp-v4-chosen` links
+        the JSON sidecars too.)
+      → build_pyramid crops to the opaque content (`find_trim` on alpha): the mosaic covers less
+        than the tile grid, and nearest-neighbour levels filled the transparent margin with
+        stray edge-colour blocks. Tiles are now opened random-access (read twice).
 - [ ] Lower zoom levels for pixel art: compare downscaling methods (box + palette snap, …).
 - [ ] Storage size (measured 2026-11-05, 4 v4 tiles, per 1024² tile): v4 PNG 1,968 KB, WebP
       lossless 1,453 KB, WebP q90 362 KB; with the 2× outline grid at 1024² 702 / 501 / 270 KB,
