@@ -538,7 +538,11 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
         | cold load localhost / 40 Mbit/s | 0.64 / 2.85 s | 0.19 / 2.25 s |
         | main thread idle / pan / zoom (ms per s) | 35 / 113 / 112 | 22 / 86 / 42 |
         | decode on main thread pan / zoom | 319 / 709 ms | 0 / 0 |
-      - [ ] Next: the game layer draws in the same GL context and loop (a `layers` hook in
+      - [ ] **Next: cars as sprites** (user, 2026-11-06), the first game-layer test: OSM roads
+        → `roads.json`, pixel-art car atlas (16 headings), instanced draw after the tiles, a
+        2000-car benchmark phase; then occlusion by buildings (depth buffer → ground mask).
+        Details in `docs/HANDOFF.md`.
+      - [ ] The game layer draws in the same GL context and loop (a `layers` hook in
         GLMap: draw after the tiles, same camera); sprites/animation tests in the benchmark;
       - content-hashed tile URLs + long immutable cache headers (as tinygyn: `?v=<n>-<hash>`);
       - tile size / format per level (tinygyn serves ~1.5 MB full-res tiles, lighter `-x2`
