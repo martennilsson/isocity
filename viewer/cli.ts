@@ -6,7 +6,7 @@
 // `build` writes index.html + assets *into* the map folder (tiles are kept), so the folder is a
 // complete static site you can host as-is. The page reads ./manifest.json and ./map.dzi.
 
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -38,6 +38,7 @@ if (cmd === 'dev') {
   await server.listen();
   console.log(`viewer: ${server.resolvedUrls!.local[0]}   (Ctrl-C to stop)`);
 } else {
+  rmSync(resolve(mapDir, 'viewer-assets'), { recursive: true, force: true }); // drop stale hashed bundles
   await build({
     root,
     configFile: false,

@@ -6,14 +6,15 @@
 // Serves the folder itself (plain static server), opens it in Chromium (full headless, GPU) at
 // 1600×1000 CSS px, device scale 2 (a Retina laptop), and runs:
 //   cold-local / cold-net  fresh browser context, time until the first view is complete (no tile
-//                          request in flight for 500 ms); "net" = 40 Mbit/s, 30 ms RTT
+//                          request in flight for 500 ms); "net" = 40 Mbit/s shared link, 30 ms latency
+//                          (modelled by the server, so worker requests are throttled too)
 //   pan                    drag across the map at 1:1 for ~6 s (tiles load during the drag)
 //   zoom                   wheel in and out over all levels
 // Per phase: frame intervals (p50/p95/p99, frames > 25 ms, > 50 ms), long tasks, main-thread CPU
 // (CDP TaskDuration / ScriptDuration per second of wall time), tile requests (count, bytes, time)
 // and image decodes from a trace (count, total ms, on the main thread or not).
 
-import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, extname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -39,15 +40,25 @@ const TYPES: Record<string, string> = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.dzi': 'application/xml', '.xml': 'application/xml', '.webp': 'image/webp', '.png': 'image/png',
 };
-const server = createServer((req, res) => {
+// Network model, applied by the server so it covers page and worker requests alike: latency per
+// request, and one shared link (responses queue for its bandwidth). null = unthrottled.
+let link: { bytesPerMs: number; latencyMs: number } | null = null;
+let linkFreeAt = 0;
+const server = createServer(async (req, res) => {
   const path = decodeURIComponent((req.url ?? '/').split('?')[0]);
-  let file = join(site, path === '/' ? 'index.html' : path);
+  const file = join(site, path === '/' ? 'index.html' : path);
   if (!file.startsWith(site) || !existsSync(file) || statSync(file).isDirectory()) {
     res.writeHead(404).end();
     return;
   }
+  const body = readFileSync(file);
+  if (link) {
+    const start = Math.max(Date.now() + link.latencyMs, linkFreeAt);
+    linkFreeAt = start + body.length / link.bytesPerMs;
+    await new Promise((r) => setTimeout(r, linkFreeAt - Date.now()));
+  }
   res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-cache' });
-  createReadStream(file).pipe(res);
+  res.end(body);
 });
 await new Promise<void>((r) => server.listen(Number(a.port), '127.0.0.1', r));
 const url = `http://127.0.0.1:${a.port}/`;
@@ -64,27 +75,32 @@ const SAMPLER = `
 
 const browser = await chromium.launch({ channel: 'chromium', args: ['--enable-gpu'] });
 
-async function newPage(throttle?: { down: number; latency: number }) {
+type TileReq = { start: number; end: number; bytes: number };
+
+async function newPage() {
   const ctx = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
   const page = await ctx.newPage();
   await page.addInitScript(SAMPLER);
   await page.addInitScript(DRIVER);
   const cdp = await ctx.newCDPSession(page);
   await cdp.send('Performance.enable');
-  await cdp.send('Network.enable');
-  if (throttle) {
-    await cdp.send('Network.emulateNetworkConditions', {
-      offline: false, latency: throttle.latency, downloadThroughput: throttle.down, uploadThroughput: throttle.down,
-    });
-  }
-  // tile requests in flight, for "view complete"
-  const inflight = new Set<string>();
+  // Tile requests via Playwright's events, which include requests made from web workers
+  // (CDP Network on the page session and Resource Timing in the window do not).
+  const inflight = new Map<object, number>();
+  const log: TileReq[] = [];
   let lastChange = Date.now();
   let seen = 0;
-  cdp.on('Network.requestWillBeSent', (e) => { if (/\.webp/.test(e.request.url)) { inflight.add(e.requestId); seen++; lastChange = Date.now(); } });
-  const done = (e: { requestId: string }) => { if (inflight.delete(e.requestId)) lastChange = Date.now(); };
-  cdp.on('Network.loadingFinished', done);
-  cdp.on('Network.loadingFailed', done);
+  page.on('request', (r) => { if (/\.webp/.test(r.url())) { inflight.set(r, Date.now()); seen++; lastChange = Date.now(); } });
+  const done = async (r: import('playwright').Request) => {
+    const t0 = inflight.get(r);
+    if (t0 === undefined) return;
+    inflight.delete(r);
+    lastChange = Date.now();
+    const bytes = (await r.sizes().catch(() => ({ responseBodySize: 0 }))).responseBodySize;
+    log.push({ start: t0, end: Date.now(), bytes });
+  };
+  page.on('requestfinished', done);
+  page.on('requestfailed', done);
   // view complete: at least one tile requested since `from`, then none in flight for quietMs
   const settled = async (quietMs = 500, maxMs = 60000, from = 0) => {
     const t0 = Date.now();
@@ -94,7 +110,7 @@ async function newPage(throttle?: { down: number; latency: number }) {
     }
     throw new Error('view never settled');
   };
-  return { ctx, page, cdp, settled, seen: () => seen };
+  return { ctx, page, cdp, settled, seen: () => seen, log };
 }
 
 // Input from inside the page, one event per animation frame (like a real mouse at 60 Hz), so the
@@ -165,20 +181,18 @@ function pct(xs: number[], p: number) {
   return +s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))].toFixed(1);
 }
 
-async function phase(page: Page, cdp: CDPSession, fn: () => Promise<void>) {
-  const tiles0: number = await page.evaluate(() => performance.getEntriesByType('resource').length);
+async function phase(page: Page, cdp: CDPSession, log: TileReq[], fn: () => Promise<void>) {
   await page.evaluate(() => { (window as any).__frames = []; (window as any).__long = []; (window as any).__rec = true; });
   const m0 = await metrics(cdp);
   const t0 = Date.now();
   const { decodes } = await traced(cdp, fn);
   const wall = (Date.now() - t0) / 1000;
   const m1 = await metrics(cdp);
-  const { frames, long, res } = await page.evaluate((n) => {
+  const { frames, long } = await page.evaluate(() => {
     (window as any).__rec = false;
-    const r = (performance.getEntriesByType('resource') as PerformanceResourceTiming[]).slice(n)
-      .filter((e) => /\.webp/.test(e.name)).map((e) => ({ bytes: e.encodedBodySize, ms: e.duration }));
-    return { frames: (window as any).__frames as number[], long: (window as any).__long as number[], res: r };
-  }, tiles0);
+    return { frames: (window as any).__frames as number[], long: (window as any).__long as number[] };
+  });
+  const res = log.filter((r) => r.start >= t0).map((r) => ({ bytes: r.bytes, ms: r.end - r.start }));
   const dt = frames.slice(1).map((t, i) => t - frames[i]);
   return {
     wall_s: +wall.toFixed(2),
@@ -203,14 +217,17 @@ async function phase(page: Page, cdp: CDPSession, fn: () => Promise<void>) {
 const report: Record<string, unknown> = { label: a.label, site, viewport: [W, H, DPR], when: new Date().toISOString() };
 
 // Cold loads
-for (const [name, throttle] of [['cold_local', undefined], ['cold_net', { down: 5e6, latency: 30 }]] as const) {
-  const { ctx, page, cdp, settled } = await newPage(throttle);
+// 40 Mbit/s = 5000 bytes/ms, 30 ms latency
+for (const [name, net] of [['cold_local', null], ['cold_net', { bytesPerMs: 5000, latencyMs: 30 }]] as const) {
+  const { ctx, page, settled, log } = await newPage();
+  link = net;
   const t0 = Date.now();
   await page.goto(page_url);
   await settled();
-  const tiles = await page.evaluate(() => (performance.getEntriesByType('resource') as PerformanceResourceTiming[])
-    .filter((e) => /\.webp/.test(e.name)).reduce((s, e) => [s[0] + 1, s[1] + e.encodedBodySize], [0, 0]));
-  report[name] = { view_complete_ms: Date.now() - t0 - 500, tiles: tiles[0], kb: Math.round(tiles[1] / 1024) };
+  link = null;
+  report[name] = {
+    view_complete_ms: Date.now() - t0 - 500, tiles: log.length, kb: Math.round(log.reduce((s, r) => s + r.bytes, 0) / 1024),
+  };
   if (name === 'cold_local') {
     report.gpu = await page.evaluate(() => {
       const gl = document.createElement('canvas').getContext('webgl');
@@ -223,7 +240,7 @@ for (const [name, throttle] of [['cold_local', undefined], ['cold_net', { down: 
 
 // Interaction phases on one page, starting at 1:1 in the middle of the map
 {
-  const { ctx, page, cdp, settled, seen } = await newPage();
+  const { ctx, page, cdp, settled, seen, log } = await newPage();
   const m = await (await fetch(url + 'manifest.json')).json();
   const cx = m.origin_screen_px[0] + m.width * 0.3, cy = m.origin_screen_px[1] + m.height * 0.5;
   await page.goto(`${page_url}#${Math.round(cx)},${Math.round(cy)},1`);
@@ -231,19 +248,19 @@ for (const [name, throttle] of [['cold_local', undefined], ['cold_net', { down: 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // calibration: nothing happens; should be ~60 fps with ~16.7 ms frames
-  report.idle = await phase(page, cdp, () => sleep(3000));
+  report.idle = await phase(page, cdp, log, () => sleep(3000));
 
   // drag right-to-left and back, 3 s each, ~1000 CSS px per stroke: new tiles load during it
   const stroke = (x0: number, dir: number) => Array.from({ length: 180 }, (_, k) =>
     [x0 + dir * k * 6, H / 2 + Math.sin(k / 15) * 120 * dir]);
-  report.pan = await phase(page, cdp, async () => {
+  report.pan = await phase(page, cdp, log, async () => {
     await page.evaluate((p) => (window as any).__drag(p), stroke(W * 0.85, -1));
     await page.evaluate((p) => (window as any).__drag(p), stroke(W * 0.15, 1));
     await sleep(500);
   });
   await settled(500, 60000, seen() - 1);
 
-  report.zoom = await phase(page, cdp, async () => {
+  report.zoom = await phase(page, cdp, log, async () => {
     const deltas = [...Array(12).fill(300), ...Array(12).fill(-300)]; // out over all levels, back in
     await page.evaluate(([x, y, d]) => (window as any).__wheel(x, y, d, 8), [W / 2, H / 2, deltas] as const);
     await sleep(800);
