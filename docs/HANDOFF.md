@@ -1,4 +1,4 @@
-# Handoff — 2026-11-05
+# Handoff — 2026-11-06
 
 State of the work at the end of a session, for whoever picks it up next. `PLAN.md` is the full
 plan and history; this file is the short version of where things stand.
@@ -29,30 +29,32 @@ retry, path-cut plan. `c9fb961`: generation windows and the path-cut mosaic:
 - Tests in `tests/test_plan_tiles.py` and `tests/test_mosaic.py` (17 pass, ruff clean).
 - `pipeline/infill.py` and `style/prompts/infill-v1.md` removed (superseded).
 
-## Next step (waiting on the user's go-ahead)
+## Done 2026-11-06: whole pilot generated
 
-Generate the whole pilot: 40 windows, ≈ $5.40 with one seed or ≈ $10.70 with two seeds (choose
-per window). Then compose and check by eye:
+All 40 windows generated with seed 2 ($4.15); the 7 fidelity rejects were redone with seed 3 and
+per-window hints in `style/prompts/hints/sodermalm-<win>.md` ($0.94). 4 fixed. Chosen candidates
+are symlinked in `data/styled/nbp-v4-chosen`; mosaic in `data/mosaic/nbp-v4-pilot` (7936×3328).
+Spent on Vertex in total: ~$12.30.
+
+Land looks good, with no visible seams. Open water is now painted by code: `pipeline/water.py`,
+via `mosaic compose --water-from data/renders/sodermalm` (mask from the render, grown into the
+model's own water, then flat colour + stable highlight dashes). Seam step ratio mean 0.94.
+
+**Progress view:** `data/HEAD.png`, regenerated with `pipeline/head.py` after every change to
+the result. Obsolete outputs were deleted on 2026-11-06; keep `data/` to what's in use.
+
+## Next step
+
+The last land invention: Gamla Stan buildings on the open Skeppsbron quay (w2_-2). Then map.db,
+the review app, the pyramid from `data/mosaic/nbp-v4-pilot` and the viewer.
+
+Compose command now:
 
 ```sh
-uv run python -m pipeline.plan_tiles --area config/area.yaml --out data/plan/sodermalm.json
-uv run python -m pipeline.mosaic cut --plan data/plan/sodermalm.json \
-    --renders data/renders/sodermalm --out data/windows/sodermalm      # prints the --tiles list
-uv run python -m pipeline.stylize --renders data/windows/sodermalm --tiles=<list> \
-    --prompt style/prompts/photo-v4.md --out data/styled/nbp-v4-s2-win \
-    --project crafty-haiku-422 --model gemini-3-pro-image --seed 2 \
-    --ref "style/references/Inklistrat 2026-11-04 kl. 1111.22.30.png" \
-    --ref "style/references/Skärmavbild 2026-11-04 kl. 11.20.47.png"
-uv run python -m pipeline.fidelity --renders data/windows/sodermalm --styled data/styled/nbp-v4-s2-win
 uv run python -m pipeline.mosaic compose --plan data/plan/sodermalm.json \
-    --styled data/styled/nbp-v4-s2-win --out data/mosaic/nbp-v4-s2
+    --styled data/styled/nbp-v4-chosen --out data/mosaic/nbp-v4-pilot \
+    --water-from data/renders/sodermalm
 ```
-
-The 9 windows from the 3×3 test (i, j in −1..1) already exist in `data/styled/nbp-v4-s2-win`.
-`stylize.py` skips existing outputs, so they won't be paid for again.
-
-After that: `data/map.db` per window (candidates, scores, choice), the review app, then the
-pyramid from the mosaic tiles (`build_pyramid.py` tile mode) and the viewer.
 
 ## Open points
 

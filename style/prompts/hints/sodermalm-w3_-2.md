@@ -1,0 +1,1 @@
+Important for this image: the large flat dark area in image 1 is open water (Riddarfjärden / Saltsjön). Draw it as open water, flat blue, at exactly the same extent. Do not put any land, island, buildings, quays, piers or boats in it beyond those visible in image 1. If image 1 is almost all water, the output is almost all water.

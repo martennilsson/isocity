@@ -13,12 +13,16 @@ Two steps around `pipeline.stylize`:
            Writes canvas.png, canvas-marked.png (cuts in red), cuts.json (per cut: colour
            difference along it and the seam step ratio, ~1 = invisible, as stitch_block) and
            <tile id>.png (RGBA) for every plan tile the canvas touches, transparent outside it.
+           --water-from <renders>: after the cuts, paint open water flat (pipeline/water.py),
+           found in the renders and grown into the model's own water; writes water-mask.png.
+           Seam stats then skip the stretches of a cut that run through painted water.
 
 Usage:
     uv run python -m pipeline.mosaic cut --plan data/plan/sodermalm.json \
         --renders data/renders/sodermalm --out data/windows/sodermalm [--windows=-1,-1,1,1]
     uv run python -m pipeline.mosaic compose --plan data/plan/sodermalm.json \
-        --styled data/styled/<run> --out data/mosaic/<run> [--windows=-1,-1,1,1] [--straight]
+        --styled data/styled/<run> --out data/mosaic/<run> [--windows=-1,-1,1,1] [--straight] \
+        [--water-from data/renders/sodermalm]
 --windows i0,j0,i1,j1: inclusive block of window indices (default: all).
 """
 
@@ -31,8 +35,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from pipeline import water as water_mod
+
 GUARD_PX = 16  # cuts stay this far from the band edges (window borders draw worst)
 STEP_BAND = range(2, 7)  # columns/rows beside a cut used as the "normal" step baseline
+MIN_SEAM_ROWS = 32  # cuts with fewer non-water rows than this get no step ratio
 
 
 def cut_rect(plan: dict, src_dir: Path, rect) -> np.ndarray:
@@ -84,20 +91,27 @@ def band_cut(old: np.ndarray, new: np.ndarray, straight: bool) -> np.ndarray:
     return min_cut(d)
 
 
-def seam_stats(c: np.ndarray, path: np.ndarray, x0: int, rows: range) -> dict:
-    """Colour step across a vertical cut (path[r] = first new column) vs steps beside it."""
+def seam_stats(c: np.ndarray, path: np.ndarray, x0: int, rows: range, skip: np.ndarray | None = None) -> dict:
+    """Colour step across a vertical cut (path[r] = first new column) vs steps beside it.
+
+    skip: optional bool mask over c (painted water); rows whose cut pixel is in it are left out."""
     a = c.astype(int)
     rr = np.array(list(rows))
+    if skip is not None and len(rr):
+        rr = rr[~skip[rr, x0 + path[rr]]]
+    if len(rr) < MIN_SEAM_ROWS:
+        return {"step_ratio": None, "rows": len(rr)}
     cx = x0 + path[rr]
 
     def step(cols):
         return np.abs(a[rr, cols] - a[rr, cols - 1]).sum(axis=1).mean()
 
     base = np.mean([step(cx + k) for k in STEP_BAND] + [step(cx - k) for k in STEP_BAND])
-    return {"step_ratio": round(float(step(cx) / (base + 1e-9)), 2)}
+    return {"step_ratio": round(float(step(cx) / (base + 1e-9)), 2), "rows": len(rr)}
 
 
-def compose(plan: dict, styled: Path, out: Path, windows: list[dict], straight: bool) -> None:
+def compose(plan: dict, styled: Path, out: Path, windows: list[dict], straight: bool,
+            water_from: Path | None = None) -> None:
     by_ij = {(w["i"], w["j"]): w for w in windows}
     cx0 = min(w["rect_px"][0] for w in windows)
     cy0 = min(w["rect_px"][1] for w in windows)
@@ -128,6 +142,14 @@ def compose(plan: dict, styled: Path, out: Path, windows: list[dict], straight: 
         old[keep_new] = new[keep_new]
 
     out.mkdir(parents=True, exist_ok=True)
+    wmask = None
+    if water_from:
+        wmask = water_mod.water_mask(cut_rect(plan, water_from, (cx0, cy0, cx1, cy1)),
+                                     water_mod.ground_m2_per_px(plan))
+        wmask = water_mod.grow_into(wmask, canvas)
+        water_mod.paint(canvas, wmask, cx0, cy0)
+        Image.fromarray(wmask).save(out / "water-mask.png")
+        print(f"  water: {wmask.mean():.1%} of the canvas painted flat")
     Image.fromarray(canvas).save(out / "canvas.png")
     marked = Image.fromarray(canvas)
     draw = ImageDraw.Draw(marked)
@@ -137,18 +159,22 @@ def compose(plan: dict, styled: Path, out: Path, windows: list[dict], straight: 
         n = len(p)
         rows = range(band, n - band)  # away from the corners where the other cuts take over
         if kind == "v":
-            st = seam_stats(canvas[y0:y0 + n], p, x0, rows)
+            st = seam_stats(canvas[y0:y0 + n], p, x0, rows, None if wmask is None else wmask[y0:y0 + n])
             draw.point([(x0 + p[r], y0 + r) for r in range(n)], fill=(255, 0, 0))
         else:
-            st = seam_stats(canvas[:, x0:x0 + n].transpose(1, 0, 2), p, y0, rows)
+            st = seam_stats(canvas[:, x0:x0 + n].transpose(1, 0, 2), p, y0, rows,
+                            None if wmask is None else wmask[:, x0:x0 + n].T)
             draw.point([(x0 + c, y0 + p[c]) for c in range(n)], fill=(255, 0, 0))
         report.append({"cut": f"{other}|{wid}", "axis": kind, **st})
-        print(f"  {other:>7s} | {wid:7s} {'vertical' if kind == 'v' else 'horizontal'}: step ratio {st['step_ratio']}")
+        ratio = st["step_ratio"] if st["step_ratio"] is not None else "- (water)"
+        print(f"  {other:>7s} | {wid:7s} {'vertical' if kind == 'v' else 'horizontal'}: step ratio {ratio}")
     marked.save(out / "canvas-marked.png")
-    ratios = [r["step_ratio"] for r in report]
+    ratios = [r["step_ratio"] for r in report if r["step_ratio"] is not None]
     if ratios:
-        print(f"  {len(ratios)} cuts, step ratio mean {np.mean(ratios):.2f} max {max(ratios):.2f}")
+        print(f"  {len(ratios)} of {len(report)} cuts measured, step ratio mean {np.mean(ratios):.2f} "
+              f"median {np.median(ratios):.2f} max {max(ratios):.2f}")
     (out / "cuts.json").write_text(json.dumps({"styled": str(styled), "straight": straight,
+                                               "water_from": str(water_from) if water_from else None,
                                                "canvas_rect_px": [cx0, cy0, cx1, cy1], "cuts": report}, indent=1))
     for t in plan["tiles"]:
         sx0, sy0, sx1, sy1 = t["screen_rect_px"]
@@ -170,6 +196,7 @@ def main() -> None:
     m = sub.add_parser("compose")
     m.add_argument("--styled", type=Path, required=True)
     m.add_argument("--straight", action="store_true")
+    m.add_argument("--water-from", type=Path, help="render tiles: paint open water flat (pipeline/water.py)")
     for p in (c, m):
         p.add_argument("--plan", type=Path, required=True)
         p.add_argument("--out", type=Path, required=True)
@@ -191,7 +218,7 @@ def main() -> None:
             Image.fromarray(cut_rect(plan, args.renders, w["rect_px"])).save(args.out / f"{w['id']}.png")
         print(f"  {len(windows)} window renders -> {args.out}: --tiles={','.join(w['id'] for w in windows)}")
     else:
-        compose(plan, args.styled, args.out, windows, args.straight)
+        compose(plan, args.styled, args.out, windows, args.straight, args.water_from)
 
 
 if __name__ == "__main__":

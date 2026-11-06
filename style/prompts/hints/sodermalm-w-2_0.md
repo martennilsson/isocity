@@ -1,0 +1,1 @@
+Important for this image: keep the real street grid of image 1: straight streets and ordinary rectangular city blocks with inner courtyards. There is no round, radial or star-shaped plaza, no central park or monument here; do not invent one.

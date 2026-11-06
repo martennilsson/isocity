@@ -8,7 +8,7 @@ Whether it becomes a game is open.
 Pilot area: **Södermalm, Stockholm** (`config/area.yaml`). Prove the whole pipeline end to end
 on the pilot, then scale.
 
-## Status (2026-11-05)
+## Status (2026-11-06)
 
 - **Data source: Google Photorealistic 3D Tiles, in closed mode** (user decision, 2026-11-04).
   See "Closed mode" below.
@@ -20,16 +20,46 @@ on the pilot, then scale.
   decided it's not worth buying memory for this: go back to **Nano Banana Pro** for the style.
   Scripts/workflows for b/c are on branch **`local-model`** (pushed), in case the PC is fixed. 4.0a (code pixelation) is done: the quality bar.
 - **In progress:** Phase 3 style with Nano Banana Pro on the photo renders: `photo-v4` (no grid)
-  is the best so far (see Phase 3). ~$7.20 spent on Vertex.
+  is the best so far (see Phase 3). ~$12.30 spent on Vertex.
 - **Seams solved (3×3 test, 2026-11-05):** overlapping 1K generation windows (`plan_tiles`
   `generation:`, stride 768, 256 px bands) composed by `pipeline/mosaic.py` with min-error path
   cuts: step ratio mean 0.84 (straight cuts 1.80; renders ~0.9). Colour levelling, Nano Banana
   frame infill and bigger windows (2K/4K) were tried and dropped (see Phase 3).
-- **Next:** the whole pilot = **40 windows ≈ $5.40** per candidate (×2 for 2 seeds, pick per
-  window): map.db + batch runner + review (Phase 5), then the pyramid from the mosaic (Phase 6).
+- **Whole pilot generated (2026-11-06):** 40 windows, seed 2 ($4.15) + 7 rejects redone with
+  seed 3 and per-window hints ($0.94); composed in `data/mosaic/nbp-v4-pilot` (7936×3328).
+  Land: good, no visible seams. Model water was the problem (invented islands, tone jumps), so
+  **open water is now painted by code** (`pipeline/water.py`, `mosaic compose --water-from`):
+  seam step ratio mean 0.94, median 0.87 over the 62 measurable cuts.
+- **Progress view: `data/HEAD.png`** (+ `HEAD.md`), made by `pipeline/head.py`: whole mosaic
+  scaled down, a 1:1 crop and a ×3 crop. Regenerated after every change to the result. Obsolete
+  experiment outputs are deleted as they're superseded (cleanup 2026-11-06: data 1.7 → 1.0 GB;
+  kept renders, windows, the s2/s3 candidates, the pilot mosaic, training renders, the LoRA).
+- **Resolution: 0.25 m/px stays for now** (user, 2026-11-06); scaling up later is kept possible
+  (see "Resolution" below).
+- **Next:** the one land invention left: buildings drawn on the open Skeppsbron quay (w2_-2,
+  top right); then map.db + review (Phase 5), pyramid from the mosaic (Phase 6).
   Fine-tuning (Phase 4) not needed for the pilot.
 - **Waiting on (user):** style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
+
+## Resolution (current proposal)
+
+0.25 m per pixel horizontally, 2:1 isometric at 30°: 1 m east–west = 4 px, 1 m north–south = 2 px,
+1 m height ≈ 3.5 px. A storey (3 m) ≈ 10 px, a window ≈ 4–5 px wide, a person ≈ 6 px tall, a car
+≈ 18 px long, a 15 m street ≈ 60 px across. Pilot (1.9 km² + margins): 7936×3328 px, 40
+generation windows. Roughly 8 Mpx and ~14–20 windows (≈ $2–3) per km². A 32 px game tile would
+be 8 m east–west. Halving the resolution (0.5 m/px) means 4× fewer pixels and a quarter of the
+cost, but windows shrink to 2 px, which loses the "recognise my building" goal.
+
+**Scaling up later** (user wants it kept possible, 2026-11-06):
+- *Free:* nearest-neighbour ×2/×3 of the finished map (bigger art pixels, no new detail). The
+  viewer can over-zoom like this anyway.
+- *Real detail:* set `scale.metres_per_pixel: 0.125` in `area.yaml`, re-render, regenerate.
+  Everything else follows the config (plan, windows, mosaic, water thresholds in m²). Costs
+  4× the windows (~$8–12/km²) and 4× the review. Untested: whether Google's mesh holds up that
+  close (only 0.25 vs 0.5 m/px was compared), and generating 2K images of the same 1K area
+  (same window count; but the 2K/4K test showed a roughly fixed detail budget per image).
+- Rule to keep it possible: no scale baked into code (sizes in metres, or derived from the plan).
 
 ## Closed mode
 
@@ -377,8 +407,32 @@ Deliverable: a model + `pipeline/generate.py`.
       render path, candidates (seed, output, fidelity scores), chosen candidate, status
       (`pending / generated / approved / rejected`), notes. Regenerating one window only
       re-cuts its 4 bands.
-- [ ] Rejection guard: `fidelity.py` per candidate (reject / check); water-only windows stamped
-      instead of generated?
+- [x] Generate all 40 pilot windows (seed 2) → 31 ok, 2 "CHECK local" (w-5_1, w1_-2: fine by
+      eye), 7 REJECT. Retried the 7 with seed 3 + per-window hints (`--hints-dir
+      style/prompts/hints/sodermalm`: "open water stays water" / "real street grid, no star
+      plaza") → 4 fixed (w-2_-2, w-3_-2, w-2_0, w-5_-1). The 3 almost-all-water windows still
+      invent land: the model won't leave a big empty water area empty.
+      Candidate choice for now: symlinks in `data/styled/nbp-v4-chosen` (until map.db).
+- [x] **Water: don't let the model draw open water** (2026-11-06). `pipeline/water.py`, used by
+      `mosaic compose --water-from <renders>`: mask = render pixels that are dark, blue-dominant
+      and texture-free after a 5 px median (removes the thin mesh-seam lines Google shows on
+      water), in connected areas ≥ 40 000 px; small holes (< 600 px) filled, boats/piers kept;
+      then grown into connected clearly-blue pixels of the styled canvas (harbour, under the
+      bridges, where the render has reflections). Painted flat (64,124,176) with short highlight
+      dashes placed by a hash of absolute screen px (stable, continuous across tiles). 17.8 % of
+      the pilot canvas. Writes `water-mask.png`. Seam stats skip cut rows in painted water (4
+      cuts entirely in water unmeasured): mean 2.47 → 0.94, max 82 → 2.64 (w-5_-2|w-4_-2).
+      → OSM water was the first idea, but Overpass was overloaded (502) and here the water is
+        split between Mälaren (a huge multipolygon) and sea coastline; the render alone works,
+        and keeps the pipeline source-independent. OSM could still serve as a sanity check.
+      → Colour chosen from the model's own water (navy 36,83,129 … bright 41,127,199).
+- [ ] Skeppsbron quay (w2_-2, top right of the pilot): the model put Gamla Stan buildings on the
+      open quay. Water fix doesn't help (it's land). Try: another seed, or feed the model the
+      window with its water already painted flat. Almost-all-water windows could skip
+      generation entirely if their land part is covered by neighbours.
+- [ ] Bright, photo-looking green strip at the west edge of the pilot (Mariaberget slope, left of
+      x≈300 px in the canvas): check if it's a window that kept photo texture.
+- [ ] Rejection guard: `fidelity.py` per candidate (reject / check).
 - [ ] Tone shifts across flat areas (lawns, plazas) are what's left of the seams: if visible on
       the whole pilot, pick the seed per window that agrees best with its neighbours in the bands.
 - [ ] Resumable batch runner (stylize is already resumable per file; 429s retried).
