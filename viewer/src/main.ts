@@ -1,4 +1,4 @@
-// Zoomable map viewer. Reads ./manifest.json (pipeline/build_pyramid.py) and ./map.dzi.
+// Zoomable map viewer (own WebGL renderer by default, ?renderer=osd for OpenSeadragon). Reads ./manifest.json (pipeline/build_pyramid.py) and ./map.dzi.
 // URL hash: #x,y,z with x,y in plan screen px (stable across rebuilds) and z = screen px per map px.
 
 import OpenSeadragon from 'openseadragon';
@@ -49,10 +49,13 @@ async function main() {
     history.replaceState(null, '', `#${Math.round(sx)},${Math.round(sy)},${+z.toFixed(3)}`);
   };
 
-  // ?renderer=gl: own WebGL renderer (glmap.ts); default: OpenSeadragon
-  if (new URLSearchParams(location.search).get('renderer') === 'gl') {
-    const { GLMap, loadDzi } = await import('./glmap');
-    const map = new GLMap($('map'), await loadDzi(`./${m.dzi}`));
+  // Default: own WebGL renderer (glmap.ts: decode in workers, draws only on change).
+  // ?renderer=osd: the OpenSeadragon viewer (fallback, and for comparing in viewer/bench.ts).
+  if (new URLSearchParams(location.search).get('renderer') !== 'osd') {
+    const [{ GLMap, loadDzi }, { miniMap }] = await Promise.all([import('./glmap'), import('./minimap')]);
+    const pyramid = await loadDzi(`./${m.dzi}`);
+    const map = new GLMap($('map'), pyramid);
+    miniMap(document.body, map, pyramid);
     const h = hashView();
     if (h) map.setView(...(fromScreen(h[0], h[1]) as [number, number]), h[2]);
     map.onChange = () => writeHash(map.cx, map.cy, map.zoom);

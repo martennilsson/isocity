@@ -1,7 +1,8 @@
 // Performance benchmark for a built map site (any viewer: input is real mouse/wheel events).
 //
 //   npm run viewer -- build --map ../dist/sodermalm        # the site to test
-//   npm run bench -- --site ../dist/sodermalm --label osd [--out ../data/bench/osd.json]
+//   npm run bench -- --site ../dist/sodermalm --label gl [--out ../data/bench/gl.json]
+//                    [--query renderer=osd]   # the OpenSeadragon viewer, for comparison
 //
 // Serves the folder itself (plain static server), opens it in Chromium (full headless, GPU) at
 // 1600×1000 CSS px, device scale 2 (a Retina laptop), and runs:
@@ -217,6 +218,15 @@ async function phase(page: Page, cdp: CDPSession, log: TileReq[], fn: () => Prom
 const report: Record<string, unknown> = { label: a.label, site, viewport: [W, H, DPR], when: new Date().toISOString() };
 
 // Cold loads
+// Warm-up load in a throwaway context (no shared cache): the first page in a fresh browser pays
+// for browser start-up work and would skew cold_local by a few hundred ms.
+{
+  const { ctx, page, settled } = await newPage();
+  await page.goto(page_url);
+  await settled();
+  await ctx.close();
+}
+
 // 40 Mbit/s = 5000 bytes/ms, 30 ms latency
 for (const [name, net] of [['cold_local', null], ['cold_net', { bytesPerMs: 5000, latencyMs: 30 }]] as const) {
   const { ctx, page, settled, log } = await newPage();

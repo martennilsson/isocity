@@ -36,7 +36,8 @@ on the pilot, then scale.
   kept renders, windows, the s2/s3 candidates, the pilot mosaic, training renders, the LoRA).
 - **Resolution: 0.25 m/px stays for now** (user, 2026-11-06); scaling up later is kept possible
   (see "Resolution" below).
-- **Pilot is zoomable in the viewer** (2026-11-06): `dist/sodermalm`, run
+- **Viewer: own WebGL renderer is the default** (2026-11-06, 60 fps, decode in workers,
+  `viewer/bench.ts` numbers in Phase 7). **Pilot is zoomable in the viewer**: `dist/sodermalm`, run
   `cd viewer && npm run viewer -- dev --map ../dist/sodermalm` → http://127.0.0.1:5180/.
 - **Next (user, 2026-11-06): move forward; quality issues (seams, Skeppsbron) deferred.**
   Map delivery must be fast and snappy for the game (Phase 7).
@@ -526,8 +527,19 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
         harness only). Zoom fetches ~20 % more (prefetch ring + fallback levels).
         → bench.ts now tracks tiles with Playwright request events (include workers) and
           models the network in its own server (CDP throttling misses worker requests).
-        To do before making it the default: mini-map, pinch zoom / touch, keyboard; then the
-        game layer draws in the same GL context and loop;
+      - [x] **Parity + default** (2026-11-06): mini-map (`src/minimap.ts`: one coarse tile + a
+        view box, click/drag to move), pinch zoom/pan with two pointers, trackpad pinch
+        (ctrl+wheel), keyboard (arrows/WASD pan while held, +/- zoom), shift+dblclick zooms out.
+        Tested by script (key hold 0.5 s = 480 px, pinch 200→400 px = ×2, mini-map jump).
+        **GL is now the default renderer**; `?renderer=osd` for OpenSeadragon. bench.ts does a
+        warm-up load first (the first load in a fresh browser was ~0.4 s slower).
+        | | OSD canvas | own GL (default) |
+        |---|---|---|
+        | cold load localhost / 40 Mbit/s | 0.64 / 2.85 s | 0.19 / 2.25 s |
+        | main thread idle / pan / zoom (ms per s) | 35 / 113 / 112 | 22 / 86 / 42 |
+        | decode on main thread pan / zoom | 319 / 709 ms | 0 / 0 |
+      - [ ] Next: the game layer draws in the same GL context and loop (a `layers` hook in
+        GLMap: draw after the tiles, same camera); sprites/animation tests in the benchmark;
       - content-hashed tile URLs + long immutable cache headers (as tinygyn: `?v=<n>-<hash>`);
       - tile size / format per level (tinygyn serves ~1.5 MB full-res tiles, lighter `-x2`
         levels, and separate small overlay layers: `life.js` ~65 kB animated tiles,

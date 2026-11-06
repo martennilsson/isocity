@@ -75,6 +75,7 @@ export class GLMap {
   cy = 0;
   zoom = 1;
   onChange: (() => void) | null = null; // camera settled (for the URL hash)
+  onView: (() => void) | null = null; // every drawn frame (cheap listeners only: mini-map)
 
   private gl: WebGL2RenderingContext;
   private canvas: HTMLCanvasElement;
@@ -96,6 +97,8 @@ export class GLMap {
   private dragging = false;
   private lastTime = 0;
   private settleTimer = 0;
+  private keys = new Set<string>();
+  private panKeys: Record<string, [number, number]> = {};
 
   constructor(private parent: HTMLElement, private p: Pyramid) {
     this.canvas = document.createElement('canvas');
@@ -182,33 +185,59 @@ export class GLMap {
 
   private bindInput() {
     const c = this.canvas;
-    let last: [number, number] | null = null;
+    c.tabIndex = 0; // focusable, for the keyboard
+    c.style.outline = 'none';
+    // Active pointers (mouse, pen, fingers). One = drag; two = pinch zoom + pan around the midpoint.
+    const pts = new Map<number, [number, number]>();
     let lastMove = 0;
+    let pinch: { dist: number; mid: [number, number] } | null = null;
+    const local = (x: number, y: number): [number, number] => {
+      const r = c.getBoundingClientRect();
+      return [x - r.left, y - r.top];
+    };
+    const twoFinger = () => {
+      const [a, b] = [...pts.values()];
+      return { dist: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as [number, number] };
+    };
     c.addEventListener('pointerdown', (e) => {
+      c.focus({ preventScroll: true });
+      pts.set(e.pointerId, local(e.clientX, e.clientY));
       this.dragging = true;
       this.vel = [0, 0];
       this.targetZoom = null;
-      last = [e.clientX, e.clientY];
       lastMove = performance.now();
+      pinch = pts.size === 2 ? twoFinger() : null;
       try { c.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
     });
     c.addEventListener('pointermove', (e) => {
-      if (!this.dragging || !last) return;
+      const prev = pts.get(e.pointerId);
+      if (!prev) return;
+      const cur = local(e.clientX, e.clientY);
+      pts.set(e.pointerId, cur);
       const now = performance.now();
-      const dx = (e.clientX - last[0]) / this.zoom, dy = (e.clientY - last[1]) / this.zoom;
-      this.cx -= dx;
-      this.cy -= dy;
-      const dt = Math.max(1, now - lastMove);
-      this.vel = [-dx / dt, -dy / dt];
-      last = [e.clientX, e.clientY];
+      if (pts.size >= 2 && pinch) {
+        const g = twoFinger();
+        this.zoomAt(g.dist / pinch.dist, ...pinch.mid); // zoom around the old midpoint
+        this.cx -= (g.mid[0] - pinch.mid[0]) / this.zoom; // then follow the midpoint
+        this.cy -= (g.mid[1] - pinch.mid[1]) / this.zoom;
+        pinch = g;
+        this.vel = [0, 0];
+      } else {
+        const dx = (cur[0] - prev[0]) / this.zoom, dy = (cur[1] - prev[1]) / this.zoom;
+        this.cx -= dx;
+        this.cy -= dy;
+        const dt = Math.max(1, now - lastMove);
+        this.vel = [-dx / dt, -dy / dt];
+      }
       lastMove = now;
       this.clamp();
       this.request();
     });
-    const up = () => {
-      if (!this.dragging) return;
+    const up = (e: PointerEvent) => {
+      if (!pts.delete(e.pointerId)) return;
+      if (pts.size === 1) { pinch = null; this.vel = [0, 0]; return; } // pinch ended: keep dragging, no fling
+      if (pts.size > 0) return;
       this.dragging = false;
-      last = null;
       if (performance.now() - lastMove > 80) this.vel = [0, 0]; // paused before release: no fling
       this.request();
     };
@@ -216,20 +245,54 @@ export class GLMap {
     c.addEventListener('pointercancel', up);
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const r = c.getBoundingClientRect();
       const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      const base = this.targetZoom ?? this.zoom;
-      this.targetZoom = Math.min(MAX_ZOOM, Math.max(this.minZoom(), base * Math.exp(-dy * 0.002)));
-      this.zoomAnchor = [e.clientX - r.left, e.clientY - r.top];
+      // trackpad pinch arrives as ctrl+wheel with small deltas: make it as responsive
+      const k = e.ctrlKey ? 0.01 : 0.002;
+      this.zoomTo((this.targetZoom ?? this.zoom) * Math.exp(-dy * k), ...local(e.clientX, e.clientY));
       this.vel = [0, 0];
-      this.request();
     }, { passive: false });
     c.addEventListener('dblclick', (e) => {
-      const r = c.getBoundingClientRect();
-      this.targetZoom = Math.min(MAX_ZOOM, (this.targetZoom ?? this.zoom) * 2);
-      this.zoomAnchor = [e.clientX - r.left, e.clientY - r.top];
-      this.request();
+      this.zoomTo((this.targetZoom ?? this.zoom) * (e.shiftKey ? 0.5 : 2), ...local(e.clientX, e.clientY));
     });
+    // Keyboard: arrows / WASD pan while held, + / - zoom around the centre.
+    const PAN = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+                  a: [-1, 0], d: [1, 0], w: [0, -1], s: [0, 1] } as Record<string, [number, number]>;
+    c.addEventListener('keydown', (e) => {
+      if (e.key in PAN) {
+        this.keys.add(e.key);
+        e.preventDefault();
+        this.request();
+      } else if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_') {
+        const f = e.key === '+' || e.key === '=' ? 2 : 0.5;
+        this.zoomTo((this.targetZoom ?? this.zoom) * f, this.cssW / 2, this.cssH / 2);
+        e.preventDefault();
+      }
+    });
+    c.addEventListener('keyup', (e) => { this.keys.delete(e.key); });
+    c.addEventListener('blur', () => this.keys.clear());
+    this.panKeys = PAN;
+  }
+
+  /** Animate the zoom to `z`, keeping canvas point (sx, sy) fixed. */
+  zoomTo(z: number, sx: number, sy: number) {
+    this.targetZoom = Math.min(MAX_ZOOM, Math.max(this.minZoom(), z));
+    this.zoomAnchor = [sx, sy];
+    this.request();
+  }
+
+  /** Animate the view centre to image point (ix, iy) (used by the mini-map). */
+  panTo(ix: number, iy: number) {
+    this.cx = ix;
+    this.cy = iy;
+    this.vel = [0, 0];
+    this.clamp();
+    this.request();
+  }
+
+  /** The visible rectangle in image px: x0, y0, x1, y1. */
+  viewRect(): [number, number, number, number] {
+    const hw = this.cssW / 2 / this.zoom, hh = this.cssH / 2 / this.zoom;
+    return [this.cx - hw, this.cy - hh, this.cx + hw, this.cy + hh];
   }
 
   // ---- frame loop ---------------------------------------------------------------------------
@@ -254,6 +317,15 @@ export class GLMap {
         this.zoomAt(this.targetZoom / this.zoom, ...this.zoomAnchor);
         this.targetZoom = null;
       } else animating = true;
+    }
+    if (this.keys.size) {
+      let kx = 0, ky = 0;
+      for (const k of this.keys) { const v = this.panKeys[k]; if (v) { kx += v[0]; ky += v[1]; } }
+      const speed = 900 / this.zoom / 1000; // 900 CSS px per second
+      this.cx += kx * speed * dt;
+      this.cy += ky * speed * dt;
+      this.clamp();
+      animating = true;
     }
     if (!this.dragging && (this.vel[0] || this.vel[1])) {
       this.cx += this.vel[0] * dt;
@@ -428,5 +500,6 @@ export class GLMap {
       }
     }
     this.pump(wanted);
+    this.onView?.();
   }
 }
