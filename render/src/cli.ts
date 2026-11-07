@@ -4,6 +4,10 @@
 //       [--tiles=-1_-1,0_-1 | --tiles-file F | --block=-1,-1,1,1 | --all] [--source google|test] [--error-target 2]
 //       [--no-antialias] [--cache-mb 3000] [--force] [--headed] [--timeout-s 300] [--env ../.env]
 //   npm run render -- view --plan ../data/plan/sodermalm.json [--source google|test] [--port 5173]
+//   npm run render -- probe --plan ../data/plan/sodermalm.json --points P.json --out H.json
+//       ground heights: P.json = {"points": [[e, n], ...] (ENU m), "tiles": {tile_id: [point index, ...]}}
+//       (written by pipeline/roads.py); H.json = {tile_id: [height m or null, ...]} in the same order.
+//       Each tile is loaded at render LOD first, so heights match the geometry the map was drawn from.
 //
 // Use --opt=VALUE for values starting with "-" (negative tile ids).
 // Resumable: tiles with an existing PNG + sidecar for the same tile geometry are skipped unless --force.
@@ -14,7 +18,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createServer, type Plugin } from 'vite';
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
 import type { PageConfig, Plan, RenderOptions } from './types';
 
 const renderDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,6 +28,7 @@ const { positionals, values: a } = parseArgs({
   options: {
     plan: { type: 'string' },
     out: { type: 'string' },
+    points: { type: 'string' },
     tiles: { type: 'string' },
     'tiles-file': { type: 'string' },
     block: { type: 'string' },
@@ -47,7 +52,7 @@ function fail(msg: string): never {
 }
 
 const command = positionals[0];
-if (command !== 'render' && command !== 'view') fail('usage: cli.ts render|view --plan PLAN.json ... (see header)');
+if (command !== 'render' && command !== 'view' && command !== 'probe') fail('usage: cli.ts render|view|probe --plan PLAN.json ... (see header)');
 if (!a.plan) fail('--plan is required');
 if (a.source !== 'google' && a.source !== 'test') fail('--source must be google or test');
 if (existsSync(a.env)) process.loadEnvFile(a.env);
@@ -100,8 +105,64 @@ const server = await createServer({
 await server.listen();
 const url = server.resolvedUrls!.local[0];
 
+async function openPage() {
+  const browser = await chromium.launch({
+    headless: !a.headed,
+    args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'],
+  });
+  const page = await browser.newPage({ viewport: { width: plan.render_size_px, height: plan.render_size_px } });
+  page.on('console', (m) => m.type() === 'error' && console.error(`[page] ${m.text()}`));
+  page.on('pageerror', (e) => console.error(`[page] ${e.message}`));
+  await page.goto(url);
+  await page.evaluate(() => window.isocity.ready);
+  const gpu: string = await page.evaluate(() => {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl?.getExtension('WEBGL_debug_renderer_info');
+    return ext ? gl!.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unknown';
+  });
+  console.log(`GPU: ${gpu}`);
+  return { browser, page, gpu };
+}
+
+/** Failed tile downloads stay failed inside a page, so on error reload (fresh session) and retry once. */
+async function withRetry<T>(page: Page, id: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (e) {
+    console.warn(`  ${id}: ${(e as Error).message.split('\n')[0]}; reloading page and retrying`);
+    await page.reload();
+    await page.evaluate(() => window.isocity.ready);
+    return run();
+  }
+}
+
 if (command === 'view') {
   console.log(`viewer: ${url}?view   (Ctrl-C to stop)`);
+} else if (command === 'probe') {
+  if (!a.points || !a.out) fail('probe needs --points and --out');
+  const req: { points: [number, number][]; tiles: Record<string, number[]> } = JSON.parse(readFileSync(a.points, 'utf8'));
+  const ids = Object.keys(req.tiles);
+  const missing = ids.filter((id) => !plan.tiles.some((t) => t.id === id));
+  if (missing.length) fail(`not in plan: ${missing.join(', ')}`);
+  console.log(`${plan.area}: probing ${req.points.length} points in ${ids.length} tile(s) (${options.source})`);
+  const { browser, page } = await openPage();
+  const result: Record<string, (number | null)[]> = {};
+  try {
+    for (const id of ids) {
+      const flat = req.tiles[id].flatMap((i) => req.points[i]);
+      const t0 = performance.now();
+      const h = await withRetry(page, id, () => page.evaluate(([tid, pts]) => window.isocity.probe(tid, pts), [id, flat] as const));
+      result[id] = h;
+      const hit = h.filter((v) => v !== null).length;
+      console.log(`  ${id}: ${hit}/${h.length} hits, ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    }
+  } finally {
+    await browser.close();
+    await server.close();
+  }
+  mkdirSync(dirname(a.out), { recursive: true });
+  writeFileSync(a.out, JSON.stringify(result));
+  process.exit(0);
 } else {
   if (!a.out) fail('--out is required for render');
   const outDir = a.out;
@@ -122,36 +183,10 @@ if (command === 'view') {
   const todo = selectTiles().filter((id) => a.force || !upToDate(id));
   console.log(`${plan.area}: ${todo.length} tile(s) to render (${options.source}, errorTarget ${options.errorTarget})`);
 
-  const browser = await chromium.launch({
-    headless: !a.headed,
-    args: ['--enable-gpu', '--ignore-gpu-blocklist', '--use-angle=metal'],
-  });
+  const { browser, page, gpu } = await openPage();
   let failed = 0;
   try {
-    const page = await browser.newPage({ viewport: { width: plan.render_size_px, height: plan.render_size_px } });
-    page.on('console', (m) => m.type() === 'error' && console.error(`[page] ${m.text()}`));
-    page.on('pageerror', (e) => console.error(`[page] ${e.message}`));
-    await page.goto(url);
-    await page.evaluate(() => window.isocity.ready);
-    const gpu = await page.evaluate(() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      const ext = gl?.getExtension('WEBGL_debug_renderer_info');
-      return ext ? gl!.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'unknown';
-    });
-    console.log(`GPU: ${gpu}`);
-
-    // Failed tile downloads stay failed inside a page, so on error reload (fresh session) and retry once.
-    const renderOnce = (id: string) => page.evaluate((tid) => window.isocity.renderTile(tid), id);
-    const renderWithRetry = async (id: string) => {
-      try {
-        return await renderOnce(id);
-      } catch (e) {
-        console.warn(`  ${id}: ${(e as Error).message.split('\n')[0]}; reloading page and retrying`);
-        await page.reload();
-        await page.evaluate(() => window.isocity.ready);
-        return renderOnce(id);
-      }
-    };
+    const renderWithRetry = (id: string) => withRetry(page, id, () => page.evaluate((tid) => window.isocity.renderTile(tid), id));
     for (const id of todo) {
       try {
         const r = await renderWithRetry(id);

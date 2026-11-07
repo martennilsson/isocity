@@ -7,7 +7,11 @@ import type { PageConfig, PlanTile } from './types';
 
 declare global {
   interface Window {
-    isocity: { ready: Promise<void>; renderTile(id: string): Promise<TileResult> };
+    isocity: {
+      ready: Promise<void>;
+      renderTile(id: string): Promise<TileResult>;
+      probe(id: string, pts: number[]): Promise<(number | null)[]>;
+    };
   }
 }
 
@@ -28,6 +32,15 @@ window.isocity = {
     if (!tile) throw new Error(`no tile ${id} in plan`);
     hud.textContent = `rendering ${id}`;
     return iso.renderTile(tile);
+  },
+  /** Ground heights under ENU points [e0, n0, e1, n1, ...] with tile `id`'s view loaded. */
+  async probe(id, pts) {
+    await ready;
+    const tile = byId.get(id);
+    if (!tile) throw new Error(`no tile ${id} in plan`);
+    hud.textContent = `probing ${id}`;
+    await iso.renderTile(tile);
+    return [...iso.groundHeights(new Float64Array(pts))].map((h) => (Number.isNaN(h) ? null : h));
   },
 };
 

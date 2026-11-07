@@ -1,4 +1,4 @@
-# Handoff — 2026-11-06 (evening)
+# Handoff — 2026-11-06 (late evening)
 
 State of the work at the end of a session, for whoever picks it up next. `PLAN.md` is the full
 plan and history; this file is the short version of where things stand.
@@ -25,6 +25,8 @@ plan and history; this file is the short version of where things stand.
   from the render sidecars through `cut` → `compose` → pyramid manifest.
 - **User requirement:** the map must be fast and snappy; a game engine will add CPU load later.
 - **Local GPU route paused** (PC has faulty RAM), code on branch `local-model`.
+- **Google 3D Tiles: 403 for this account since 2026-11-06** ("not available for your account
+  and region"). Existing renders still work; nothing new can be rendered from Google.
 
 ## How to run
 
@@ -44,26 +46,27 @@ npm run viewer -- build --map ../dist/sodermalm && npm run bench -- --site ../di
 `data/HEAD.png` (+ `HEAD.md`) is the user's progress view: regenerate it after every change to
 the map and say what it shows. Delete superseded outputs in `data/` as you go.
 
-## Next step (was just starting): cars as sprites
+## Cars as sprites: first test done on ground heights
 
-User asked: "can you make cars of the sprites?" — the game-layer test. Plan:
+User asked: "can you make cars of the sprites?" Done as a game-layer test (PLAN.md Phase 7):
 
-1. **Roads:** `pipeline/roads.py` — drivable OSM highways (Overpass; it returned 502 earlier
-   today and needs a User-Agent header, e.g. `isocity-pipeline/0.1`; try mirrors), skip
-   tunnels (Söderledstunneln) and, for now, bridges (no deck height in OSM → cars would be drawn
-   tens of px below the deck). Project with `plan_tiles.Projection` (no new geometry code) to
-   map image px; write `dist/<map>/roads.json`. Credit "© OpenStreetMap contributors".
-2. **Sprites:** pixel-art cars generated at load time from 3D boxes (body + cabin), 16 headings ×
-   a few colours, into one atlas texture. Screen projection: 1 m east = 4 px, 1 m north = 2 px
-   up, 1 m height ≈ 3.46 px up (put the camera vectors `right_enu`/`up_enu` in manifest.json
-   rather than hard-coding).
-3. **Game layer in GLMap:** a `layers` hook drawn after the tiles with the same camera; cars as
-   one instanced draw call; simulation in typed arrays (position along polyline, speed); the
-   map keeps redrawing while the layer animates.
-4. **Benchmark:** a phase with ~2000 moving cars (main-thread ms per s, fps).
-5. **Known issue, next after that:** occlusion. Buildings south of a street cover it on screen,
-   so cars drawn on top look wrong. Fix: a depth/height buffer from the renderer → a "ground
-   visible" mask texture, sampled in the car shader.
+- `pipeline/roads.py points|build` → `dist/sodermalm/roads.json` (OSM from
+  `data/osm/Stockholm.osm.pbf`, BBBike; Overpass was down all afternoon).
+- `viewer/src/sprites.ts` (atlas from 3D boxes, the manifest's camera), `viewer/src/cars.ts`
+  (traffic + instanced draw), `MapLayer` hook in `glmap.ts`. `?cars=N` (default 400), `p` pauses.
+- 2000 cars: 60 fps idle/pan/zoom, +37 ms/s main thread. Screenshot:
+  `data/roads/sodermalm/cars-view.png`.
+
+**Ground heights.** Roads are at h = 0 (`build --flat`), so on the hills cars drive
+on rooftops.
+
+1. User: create a free Geotorget account (geotorget.lantmateriet.se); put the login in `.env`
+   as `LM_USER` / `LM_PASSWORD`.
+2. Download Markhöjdmodell `m657_67`, `m658_67` (URLs via STAC `dtm-cog`, see PLAN.md), add
+   `roads.py build --dem` (pyproj to SWEREF99 TM, sample the 1 m grid, RH2000 → plan h,
+   calibrate the offset on the waterfront), rebuild `roads.json`, check cars on Götgatan.
+3. Then occlusion (buildings in front of streets), now without the Google depth buffer:
+   building blocks (OSM / Stockholm LOD1) → "ground visible" mask.
 
 ## Deferred (user: move forward, revisit quality later)
 

@@ -15,6 +15,7 @@ import {
   NearestFilter,
   OrthographicCamera,
   PlaneGeometry,
+  Raycaster,
   RepeatWrapping,
   Scene,
   Vector3,
@@ -217,6 +218,26 @@ export class IsoScene {
         cacheMB: this.cacheMB(),
       },
     };
+  }
+
+  /**
+   * Ground height under ENU points (e, n), against the geometry loaded for the current view
+   * (call after renderTile, so the view is at render LOD). A ray straight down from above every
+   * roof; the lowest hit is the ground (tree canopy, cars, awnings are above it). NaN = no hit.
+   */
+  groundHeights(pts: Float64Array): Float32Array {
+    const out = new Float32Array(pts.length / 2).fill(NaN);
+    const target = this.tiles?.group ?? this.scene;
+    const ray = new Raycaster();
+    const down = new Vector3(0, 0, -1);
+    const from = new Vector3();
+    for (let i = 0; i < out.length; i++) {
+      from.set(pts[2 * i], pts[2 * i + 1], 1000);
+      ray.set(from, down);
+      const hits = ray.intersectObject(target, true);
+      if (hits.length) out[i] = hits[hits.length - 1].point.z;
+    }
+    return out;
   }
 
   private cacheMB() {

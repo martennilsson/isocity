@@ -10,8 +10,11 @@ on the pilot, then scale.
 
 ## Status (2026-11-06)
 
-- **Data source: Google Photorealistic 3D Tiles, in closed mode** (user decision, 2026-11-04).
-  See "Closed mode" below.
+- **Game layer, first test (2026-11-06): cars as sprites** in the viewer (Phase 7):
+  OSM roads, a generated pixel-art car atlas, a traffic simulation, instanced drawing; 2000
+  cars at 60 fps. **Ground heights**: roads are at sea level for now, so cars on
+  the hills are drawn on rooftops. Fix: Lantmäteriet Markhöjdmodell (needs a free Geotorget
+  login from the user).
 - **Done:** tile planner, headless renderer on Google 3D Tiles, seam checks, pilot rendered
   north-up (32 tiles), training-tile selection, tile pyramid + viewer (prototype map of the
   renders), Gemini image-model script (`pipeline/stylize.py`).
@@ -44,7 +47,8 @@ on the pilot, then scale.
 - **Deferred:** the one land invention left: buildings drawn on the open Skeppsbron quay (w2_-2,
   top right); then map.db + review (Phase 5), pyramid from the mosaic (Phase 6).
   Fine-tuning (Phase 4) not needed for the pilot.
-- **Waiting on (user):** style choice and own reference images; replies to the licence requests
+- **Waiting on (user):** a free Lantmäteriet Geotorget account (terrain heights for the cars);
+  style choice and own reference images; replies to the licence requests
   (Stockholm stad, Hexagon, HERE — drafts written 2026-11-04).
 
 ## Resolution (current proposal)
@@ -66,24 +70,6 @@ cost, but windows shrink to 2 px, which loses the "recognise my building" goal.
   (same window count; but the 2K/4K test showed a roughly fixed detail budget per image).
 - Rule to keep it possible: no scale baked into code (sizes in metres, or derived from the plan).
 
-## Closed mode
-
-Google's Map Tiles terms (EEA, read 2026-11-04) forbid storing renders, creating content based on
-them, training AI on them and selling them. Live in-browser display with attribution is allowed.
-The user chose to continue privately with Google anyway, since a public or paid product isn't
-decided yet. Rules while in closed mode:
-
-- Nothing derived from Google is published, shared or sold. Renders, generated tiles and
-  pyramids stay local (`data/`, `dist/` are git-ignored); the viewer only runs on localhost.
-- Generated tiles must credit "Map data ©Google" in the viewer.
-- Before anything goes public: switch to a licensed source (see "Licensed source" below) and
-  re-render; keep the pipeline source-independent so that is a re-render, not a rewrite.
-- Fine-tuning a model on Google-derived pairs is explicitly prohibited by the terms; treat any
-  such model as throw-away, private experiment only.
-
-Key clauses (EEA ToS §3.3.2(a) no "pre-fetch, index, store, reshare, or rehost … outside of the
-Services"; (b) no caching; (c) no "content based on Google Maps Content … (v) … train, test,
-validate or fine-tune" AI; §3.3.1(b) no "sell, resell, sublicense, transfer, or distribute").
 
 ---
 
@@ -538,12 +524,55 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
         | cold load localhost / 40 Mbit/s | 0.64 / 2.85 s | 0.19 / 2.25 s |
         | main thread idle / pan / zoom (ms per s) | 35 / 113 / 112 | 22 / 86 / 42 |
         | decode on main thread pan / zoom | 319 / 709 ms | 0 / 0 |
-      - [ ] **Next: cars as sprites** (user, 2026-11-06), the first game-layer test: OSM roads
-        → `roads.json`, pixel-art car atlas (16 headings), instanced draw after the tiles, a
-        2000-car benchmark phase; then occlusion by buildings (depth buffer → ground mask).
-        Details in `docs/HANDOFF.md`.
-      - [ ] The game layer draws in the same GL context and loop (a `layers` hook in
-        GLMap: draw after the tiles, same camera); sprites/animation tests in the benchmark;
+      - [x] **Cars as sprites** (user, 2026-11-06), the first game-layer test:
+        - **Roads** `pipeline/roads.py`: `points` (OSM extract → graph split at junctions,
+          densified to ≤ 8 m, + probe points per plan tile) → [heights] → `build` →
+          `dist/<map>/roads.json` (ENU metres, edges with oneway/lanes/km/h; 1495 edges,
+          54 km). Drivable highways incl. service roads (not parking aisles/driveways), not
+          access=no/private; tunnels and bridges skipped (no deck height in OSM).
+          → OSM from a file (BBBike `Stockholm.osm.pbf`, `osmium`), not Overpass: every
+            Overpass mirror answered 502/504 for hours.
+          → Heights were to come from the Google meshes: `render probe` (new CLI command)
+            loads each plan tile at render LOD and raycasts every road point straight down,
+            lowest hit = ground. Tested on the synthetic scene (all rays hit the ground under
+            the boxes); **Google then answered 403** (see Status). Kept: works with any mesh
+            source the renderer loads.
+          → For now `build --flat`: every road at h = 0. Correct only along the water; on the
+            hills (20–40 m) cars are drawn 70–140 px too low, on rooftops.
+        - **Sprites** `viewer/src/sprites.ts`: generated at load from two boxes (body + cabin,
+          4.3×1.8 m) with the manifest's camera (`build_pyramid` now writes `camera`
+          right/up/view_dir) → 25×17 px cells, 16 headings × 8 paints, flat shading (sun from
+          the south-east), 1 px dark outline, ground shadow row. Per-pixel rasterising, no AA.
+        - **Layer hook in GLMap** (`MapLayer`: `update(dt)` → still animating?, `draw(gl, view)`
+          after the tiles, same camera). Tiles now use a VAO so layers can keep their own GL
+          state. The URL hash is written when the *camera* settles (layers keep the frame
+          loop running).
+        - **Traffic** `viewer/src/cars.ts`: typed arrays (edge, segment, distance, speed,
+          lane, paint); random next edge at junctions, U-turn only at dead ends, respawn at
+          one-way dead ends; drive on the right, 3 m lanes; speed = maxspeed (or class
+          default) × 0.8–1.15. Shadows (blended) + cars (depth by screen y) = 2 instanced
+          draws; only cars in view uploaded; anchors snap to whole map px. `?cars=N`
+          (default 400, 0 = off), `p` pauses.
+        - **Benchmark** (`npm run bench -- --site ../dist/sodermalm --query cars=N`):
+          | | cars=0 | cars=2000 |
+          |---|---|---|
+          | fps idle / pan / zoom | 60 / 60 / 60 | 60 / 60 / 60 |
+          | frame p99 (ms) | 16.8 | 16.8 |
+          | main thread idle / pan / zoom (ms per s) | 24 / 79 / 46 | 61 / 104 / 70 |
+          → 2000 cars ≈ +37 ms/s (≈ 0.6 ms per frame) of main thread; no long tasks.
+            "Idle" with cars is no longer idle: the map draws every frame while cars move.
+      - [ ] **Ground heights for roads** (blocked on the user: a free Geotorget account).
+        Lantmäteriet *Markhöjdmodell* (`dtm-cog` on `api.lantmateriet.se/stac-hojd/v1`):
+        1 m ground-only grid, CC BY 4.0, COGs `m657_67` + `m658_67` cover the pilot; the files
+        need Basic auth (the STAC metadata doesn't). Then `roads.py build --dem`: ENU → lon/lat
+        → SWEREF99 TM (pyproj) → sample; RH2000 → plan h (geoid ≈ 24 m; calibrate on the
+        waterfront). Licence-clean, so it also fits the public route.
+      - [ ] **Occlusion** (next after heights): buildings in front of a street cover it on
+        screen, so cars must be hidden there. The planned renderer depth buffer needs Google
+        too; alternatives: OSM/Stockholm LOD1 building blocks (footprint + height) rasterised
+        with the same camera into a "ground visible" mask, sampled in the car shader.
+      - [ ] Cars that see each other (follow the car ahead, stop at junctions); bridges with
+        deck heights (from OSM `layer` + DEM at the abutments).
       - content-hashed tile URLs + long immutable cache headers (as tinygyn: `?v=<n>-<hash>`);
       - tile size / format per level (tinygyn serves ~1.5 MB full-res tiles, lighter `-x2`
         levels, and separate small overlay layers: `life.js` ~65 kB animated tiles,
@@ -569,10 +598,7 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
 
 | Risk | Mitigation |
 |---|---|
-| Google terms forbid publishing, deriving, training and selling | Closed mode; licensed source (Stockholm stad / Hexagon / HERE) before going public |
 | Outdated source data (Slussen) | Patch affected quadrants with own reference photos (buildings may be freely depicted, URL 24 §) |
-| Existing map: **tinysthlm.com** (Google 3D Tiles → Qwen + tiny.london LoRA, free, non-commercial) | Own style; licensed source if it ever goes public |
-| Image-model licences (some are non-commercial) | Check before any public use |
 | Seams between tiles | Half-tile sliding-window infill + seam planner + review app |
 | Water, trees, glass look wrong | Over-represent them in training pairs; stamp water |
 | Style drifts across the map | Fine-tuned model + shared palette |
@@ -584,4 +610,3 @@ Deliverable: every generation window in the pilot approved, mosaic composed.
 - Isopolis (SF) behind the scenes: https://sf.isopolis.city/dev.html
 - tinyrj (Rio): https://tinyrj.com · Tiny Stockholm: https://tinysthlm.com
 - Isometric Map Finder: https://10015.io/tools/isometric-map-finder
-- Google EEA Maps terms: https://cloud.google.com/terms/maps-platform/eea

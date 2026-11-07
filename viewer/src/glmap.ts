@@ -34,6 +34,24 @@ interface Tile {
   h: number;
 }
 
+/** What a layer drawn over the map gets each frame (same camera as the tiles). */
+export interface LayerView {
+  cx: number; // view centre, image px
+  cy: number;
+  zoom: number; // CSS px per image px
+  cssW: number;
+  cssH: number;
+  rect: [number, number, number, number]; // visible image px: x0, y0, x1, y1
+}
+
+/** A game layer: simulated in update(), drawn after the tiles in draw(). */
+export interface MapLayer {
+  /** advance by dtMs; return true while it animates (the map then keeps drawing frames) */
+  update(dtMs: number): boolean;
+  /** draw with its own GL state; leave blending/depth test disabled and no VAO bound */
+  draw(gl: WebGL2RenderingContext, view: LayerView): void;
+}
+
 const WORKERS = 3;
 const MAX_INFLIGHT = 8;
 const CACHE_TILES = 160; // 512² RGBA = 1 MB each
@@ -88,6 +106,11 @@ export class GLMap {
   private frame = 0;
   private dirty = true;
   private raf = 0;
+  private prog: WebGLProgram;
+  private vao: WebGLVertexArrayObject;
+  private layers: MapLayer[] = [];
+  private reported = ''; // camera last passed to onChange
+  private pending = ''; // camera waiting to be reported (settle timer running)
   private uRect: WebGLUniformLocation;
   private uUv: WebGLUniformLocation;
   // animation state
@@ -119,12 +142,16 @@ export class GLMap {
     }
     gl.linkProgram(prog);
     gl.useProgram(prog);
+    this.prog = prog;
+    this.vao = gl.createVertexArray()!;
+    gl.bindVertexArray(this.vao);
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
     const loc = gl.getAttribLocation(prog, 'a_pos');
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
     this.uRect = gl.getUniformLocation(prog, 'u_rect')!;
     this.uUv = gl.getUniformLocation(prog, 'u_uv')!;
     gl.uniform1i(gl.getUniformLocation(prog, 'u_tex'), 0);
@@ -295,6 +322,11 @@ export class GLMap {
     return [this.cx - hw, this.cy - hh, this.cx + hw, this.cy + hh];
   }
 
+  addLayer(layer: MapLayer) {
+    this.layers.push(layer);
+    this.request();
+  }
+
   // ---- frame loop ---------------------------------------------------------------------------
 
   /** Schedule a frame (frames run only while something changes). */
@@ -337,14 +369,23 @@ export class GLMap {
       this.clamp();
     }
 
+    const moving = animating || this.dragging;
+    for (const l of this.layers) if (l.update(dt)) animating = true;
+
     if (this.dirty || animating) {
       this.dirty = false;
       this.draw();
     }
     if (animating) this.request();
-    else {
+    // camera settled: tell onChange once (layers may keep the frame loop running forever)
+    const cam = `${this.cx},${this.cy},${this.zoom}`;
+    if (moving || cam !== this.pending) {
       clearTimeout(this.settleTimer);
-      this.settleTimer = window.setTimeout(() => this.onChange?.(), 150);
+      this.pending = '';
+    }
+    if (!moving && cam !== this.reported && cam !== this.pending) {
+      this.pending = cam;
+      this.settleTimer = window.setTimeout(() => { this.reported = cam; this.pending = ''; this.onChange?.(); }, 150);
     }
   }
 
@@ -457,6 +498,9 @@ export class GLMap {
     const gl = this.gl;
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.prog);
+    gl.bindVertexArray(this.vao);
+    gl.activeTexture(gl.TEXTURE0);
 
     const L = this.targetLevel();
     // wanted: visible tiles at L, then one ring around them (prefetch)
@@ -498,6 +542,11 @@ export class GLMap {
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
       }
+    }
+    gl.bindVertexArray(null);
+    if (this.layers.length) {
+      const view: LayerView = { cx: this.cx, cy: this.cy, zoom: this.zoom, cssW: this.cssW, cssH: this.cssH, rect: this.viewRect() };
+      for (const l of this.layers) l.draw(gl, view);
     }
     this.pump(wanted);
     this.onView?.();

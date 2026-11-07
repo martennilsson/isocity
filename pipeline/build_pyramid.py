@@ -124,6 +124,9 @@ def main() -> None:
         "origin_screen_px": origin,
         "metres_per_pixel": plan["config"]["scale"]["metres_per_pixel"],
         "north_screen_dir": plan["camera"]["north_screen_dir"],
+        # ENU metres -> screen px: (p·right / mpp, -(p·up) / mpp); image px = screen - origin.
+        # For the game layer (roads.json, sprites); same basis as plan_tiles.Projection.
+        "camera": {k: plan["camera"][k] for k in ("right_enu", "up_enu", "view_dir_enu")},
         "screen_to_lonlat": screen_to_lonlat_affine(plan),
         "attributions": attributions,
         "source_tiles": str(args.tiles_dir),

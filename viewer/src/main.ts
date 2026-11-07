@@ -14,6 +14,7 @@ interface Manifest {
   north_screen_dir: [number, number];
   screen_to_lonlat: [[number, number, number], [number, number, number]];
   attributions: string[];
+  camera?: import('./sprites').Camera;
 }
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -59,6 +60,18 @@ async function main() {
     const h = hashView();
     if (h) map.setView(...(fromScreen(h[0], h[1]) as [number, number]), h[2]);
     map.onChange = () => writeHash(map.cx, map.cy, map.zoom);
+    // Game-layer test: ?cars=N cars on the OSM roads (default 400, 0 = off)
+    const nCars = Number(new URLSearchParams(location.search).get('cars') ?? 400);
+    if (nCars > 0 && m.camera) {
+      const { CarLayer } = await import('./cars');
+      const cars = await CarLayer.load('./roads.json', { ...m, camera: m.camera }, nCars);
+      if (cars) {
+        map.addLayer(cars);
+        $('attribution').textContent += `${m.attributions.length ? ' · ' : ''}Roads © OpenStreetMap contributors`;
+        (window as any).__cars = cars; // for viewer/bench.ts
+        window.addEventListener('keydown', (e) => { if (e.key === 'p') cars.setPaused(!cars.paused); });
+      }
+    }
     $('map').addEventListener('pointermove', (e) => {
       const r = $('map').getBoundingClientRect();
       showCoords(...map.toImage(e.clientX - r.left, e.clientY - r.top));
